@@ -1,0 +1,46 @@
+<div data-count="{{ total }}">
+  {% if frequent %}
+  <div class="freq">Fréquents :
+    {% for name in frequent %}
+    <form method="post" action="/epicerie/ajouter" data-async>
+      <input type="hidden" name="texte" value="{{ name }}">
+      <input type="hidden" name="filtre" value="{{ tag }}">
+      <button>{{ name }}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if tags %}
+  <div class="chips">
+    <a class="chip {{ 'on' if not tag }}" href="/epicerie">Tout <span class="n">{{ total }}</span></a>
+    {% for name, n in tags %}
+    <a class="chip {{ 'on' if tag|lower == name|lower }}" href="/epicerie?etiquette={{ name|urlencode }}">{{ name }} <span class="n">{{ n }}</span></a>
+    {% endfor %}
+    {% if untagged %}
+    <a class="chip {{ 'on' if tag == '-' }}" href="/epicerie?etiquette=-">Sans étiquette <span class="n">{{ untagged }}</span></a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if items %}
+  <div class="list">
+    {% for item in items %}{% include "_epicerie_article.html" %}{% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">{{ "Rien avec cette étiquette." if tag else "Rien à acheter." }}</p>
+  {% endif %}
+
+  {% if checked_items %}
+  <div class="section-title">
+    <span>Achetés · {{ checked_items|length }}</span>
+    <form method="post" action="/epicerie/vider" data-async>
+      <input type="hidden" name="filtre" value="{{ tag }}">
+      <button class="btn ghost">Vider les achetés</button>
+    </form>
+  </div>
+  <div class="list">
+    {% for item in checked_items %}{% include "_epicerie_article.html" %}{% endfor %}
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f5f2">
+  <title>{% block title %}frigo{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  {# use-credentials : sans le cookie, oauth2-proxy redirigerait la requête du manifeste. #}
+  <link rel="manifest" href="/static/manifest.webmanifest" crossorigin="use-credentials">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>{% block heading %}{% endblock %}</h1>
+      <div class="me" title="{{ person }}">{{ person[:1] }}</div>
+    </header>
+    {% block content %}{% endblock %}
+  </div>
+  <nav class="tabs">
+    <div class="inner">
+      {% for s in sections %}
+      <a href="{{ s.path }}" class="{{ 'on' if s.id == section }}">
+        {% include "icons/" ~ s.id ~ ".svg" %}
+        {{ s.label }}
+      </a>
+      {% endfor %}
+    </div>
+  </nav>
+</body>
+</html>

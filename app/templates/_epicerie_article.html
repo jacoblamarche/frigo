@@ -1,0 +1,16 @@
+<div class="item {{ 'done' if item.checked }}">
+  <form method="post" action="/epicerie/{{ item.id }}/cocher" data-async>
+    <input type="hidden" name="filtre" value="{{ tag }}">
+    <button class="box" aria-label="{{ 'Décocher' if item.checked else 'Cocher' }} {{ item.name }}"></button>
+  </form>
+  <div class="what">
+    <div class="name">{{ item.name }}{% if item.quantity %} <span class="qty">· {{ item.quantity }}</span>{% endif %}</div>
+    {% if item.tags %}
+    <div class="tags">{% for t in item.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>
+    {% endif %}
+  </div>
+  <form method="post" action="/epicerie/{{ item.id }}/supprimer" data-async>
+    <input type="hidden" name="filtre" value="{{ tag }}">
+    <button class="remove" aria-label="Retirer {{ item.name }}">×</button>
+  </form>
+</div>

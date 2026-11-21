@@ -1,0 +1,12 @@
+{
+  "name": "frigo",
+  "short_name": "frigo",
+  "start_url": "/epicerie",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#f6f5f2",
+  "icons": [
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/static/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
