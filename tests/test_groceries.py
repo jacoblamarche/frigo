@@ -137,3 +137,20 @@ def test_nothing_to_do_leaves_the_version_alone(con):
     groceries.clear_checked(con)
 
     assert data_version(con) == start
+
+
+def test_staples_are_matched_on_the_normalized_name(con):
+    assert groceries.add_staple(con, "farine", "Jacob")
+    assert not groceries.add_staple(con, "FARINE ", "Catherine")
+    assert not groceries.add_staple(con, "  ", "Jacob")
+    groceries.add_staple(con, "Pâtes", "Jacob")
+
+    kept, skipped = groceries.split_staples(
+        con, [ParsedItem("Farine"), ParsedItem("Pates"), ParsedItem("Farine de riz")]
+    )
+
+    assert groceries.list_staples(con) == ["Farine", "Pâtes"]
+    assert [i.name for i in skipped] == ["Farine", "Pates"]
+    assert [i.name for i in kept] == ["Farine de riz"]
+    assert groceries.remove_staple(con, "PATES")
+    assert groceries.list_staples(con) == ["Farine"]

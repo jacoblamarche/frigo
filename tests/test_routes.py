@@ -96,3 +96,20 @@ def test_check_clear_and_remove(client, settings):
 def test_root_redirects_to_groceries(client):
     response = client.get("/", follow_redirects=False)
     assert response.headers["location"] == "/epicerie"
+
+
+def test_staples_page_adds_and_removes(client):
+    response = client.post(
+        "/epicerie/stock/ajouter", data={"nom": "farine"}, follow_redirects=False
+    )
+    assert response.headers["location"] == "/epicerie/stock"
+    assert "Farine" in client.get("/epicerie/stock").text
+
+    client.post("/epicerie/stock/retirer", data={"nom": "Farine"})
+    assert "Aucun produit" in client.get("/epicerie/stock").text
+
+
+def test_people_can_still_add_a_staple_themselves(client):
+    client.post("/epicerie/stock/ajouter", data={"nom": "farine"})
+    client.post("/epicerie/ajouter", data={"texte": "farine"})
+    assert 'aria-label="Cocher Farine"' in client.get("/epicerie").text
