@@ -5,8 +5,11 @@
   </form>
   <div class="what">
     <div class="name">{{ item.name }}{% if item.quantity %} <span class="qty">· {{ item.quantity }}</span>{% endif %}</div>
-    {% if item.tags %}
-    <div class="tags">{% for t in item.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>
+    {% if item.tags or item.added_by == mcp_author %}
+    <div class="tags">
+      {%- for t in item.tags %}<span class="tag">{{ t }}</span>{% endfor -%}
+      {%- if item.added_by == mcp_author %}<span class="by" title="Ajouté par {{ mcp_author }}">{{ mcp_author }}</span>{% endif -%}
+    </div>
     {% endif %}
   </div>
   <form method="post" action="/epicerie/{{ item.id }}/supprimer" data-async>
