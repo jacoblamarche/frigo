@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: lams364/frigo
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: frigo:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run -d --name frigo -p 8000:8000 -e FRIGO_DEV_USER=CI frigo:ci
+          for _ in $(seq 30); do curl -fsS localhost:8000/healthz && break; sleep 1; done
+          curl -fsS localhost:8000/epicerie | grep -q 'Rien à acheter'
+          docker run -d --name frigo-auth -p 8001:8000 frigo:ci
+          for _ in $(seq 30); do curl -fsS localhost:8001/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Email: x@example.com' localhost:8001/epicerie)" = 403
+
+      - name: Container logs
+        if: failure()
+        run: docker logs frigo; docker logs frigo-auth
+
+      - name: Tags
+        if: github.event_name == 'push'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          username: lams364
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Publish
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
