@@ -92,5 +92,17 @@ Read & Write) dans les secrets du dépôt :
 gh secret set DOCKERHUB_TOKEN -R jacoblamarche/frigo
 ```
 
+## Revue Claude
+
+À l'ouverture d'une PR (hors brouillon), Claude la relit avec le plugin `code-review` et
+commente les problèmes qu'il juge sûrs. Il faut l'app GitHub
+[Claude](https://github.com/apps/claude) installée sur le dépôt, et un jeton d'abonnement
+Claude dans les secrets :
+
+```bash
+claude setup-token
+gh secret set CLAUDE_CODE_OAUTH_TOKEN -R jacoblamarche/frigo
+```
+
 Le déploiement (LXC, nginx, oauth2-proxy) vit dans
 [iac-homelab](https://github.com/jacoblamarche/iac-homelab).
