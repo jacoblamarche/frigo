@@ -2,6 +2,7 @@ import re
 import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
+from itertools import groupby
 
 from app.db import bump_version, now
 
@@ -15,6 +16,7 @@ NUMBER = r"\d+(?:[.,]\d+)?|\d+/\d+|[½¼¾]"
 NUMBER_RE = re.compile(rf"^(?:{NUMBER})$")
 GLUED_RE = re.compile(rf"^({NUMBER})(g|kg|mg|ml|l|lb|lbs|oz)$", re.IGNORECASE)
 BULLET_RE = re.compile(r"^\s*(?:[-*•–]|\d+[.)])\s+")
+OTHER_AISLE = "Autre"
 
 
 @dataclass
@@ -22,6 +24,7 @@ class ParsedItem:
     name: str
     quantity: str = ""
     tags: list[str] = field(default_factory=list)
+    aisle_id: int | None = None
 
 
 @dataclass
@@ -38,6 +41,14 @@ class Item:
     checked: bool
     added_by: str
     tags: list[str]
+    aisle_id: int
+    aisle: str
+
+
+@dataclass
+class Aisle:
+    id: int
+    name: str
 
 
 def normalize(text: str) -> str:
@@ -117,32 +128,61 @@ def _open_item(con: sqlite3.Connection, name_key: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def list_aisles(con: sqlite3.Connection) -> list[Aisle]:
+    return [
+        Aisle(row["id"], row["name"])
+        for row in con.execute("SELECT * FROM aisles ORDER BY position")
+    ]
+
+
+def find_aisle(con: sqlite3.Connection, name: str) -> int:
+    aisles = list_aisles(con)
+    for aisle in aisles:
+        if normalize(aisle.name) == normalize(name):
+            return aisle.id
+    raise ValueError(f"Rayon inconnu : « {name} ». Rayons : {', '.join(a.name for a in aisles)}.")
+
+
+def _remembered_aisle(con: sqlite3.Connection, name_key: str) -> int | None:
+    row = con.execute(
+        "SELECT aisle_id FROM grocery_history WHERE name_key = ?", (name_key,)
+    ).fetchone()
+    return row["aisle_id"] if row else None
+
+
 def add_items(con: sqlite3.Connection, items: list[ParsedItem], added_by: str) -> list[Added]:
-    """Ajoute les articles ; un article déjà à acheter cumule quantité et étiquettes."""
+    """Ajoute les articles ; un article déjà à acheter cumule quantité et étiquettes.
+
+    Le rayon retenu pour l'article l'emporte sur celui proposé dans `aisle_id`.
+    """
     added = []
     with con:
         for item in items:
             key = normalize(item.name)
+            aisle_id = _remembered_aisle(con, key) or item.aisle_id
             existing = _open_item(con, key)
             if existing:
                 item_id = existing["id"]
                 con.execute(
-                    "UPDATE grocery_items SET quantity = ? WHERE id = ?",
-                    (combine_quantities(existing["quantity"], item.quantity), item_id),
+                    "UPDATE grocery_items SET quantity = ?, aisle_id = coalesce(aisle_id, ?)"
+                    " WHERE id = ?",
+                    (combine_quantities(existing["quantity"], item.quantity), aisle_id, item_id),
                 )
             else:
                 item_id = con.execute(
-                    "INSERT INTO grocery_items (name, name_key, quantity, added_by, created_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (item.name, key, item.quantity, added_by, now()),
+                    "INSERT INTO grocery_items"
+                    " (name, name_key, quantity, aisle_id, added_by, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (item.name, key, item.quantity, aisle_id, added_by, now()),
                 ).lastrowid
             _add_tags(con, item_id, item.tags)
             con.execute(
-                "INSERT INTO grocery_history (name_key, name, times, last_added_at)"
-                " VALUES (?, ?, 1, ?) ON CONFLICT (name_key)"
+                "INSERT INTO grocery_history (name_key, name, times, last_added_at, aisle_id)"
+                " VALUES (?, ?, 1, ?, ?) ON CONFLICT (name_key)"
                 " DO UPDATE SET name = excluded.name, times = times + 1,"
-                " last_added_at = excluded.last_added_at",
-                (key, item.name, now()),
+                " last_added_at = excluded.last_added_at,"
+                " aisle_id = coalesce(aisle_id, excluded.aisle_id)",
+                (key, item.name, now(), aisle_id),
             )
             added.append(Added(item_id, merged=existing is not None))
         if items:
@@ -198,12 +238,14 @@ def clear_checked(con: sqlite3.Connection) -> int:
 
 def _items(con: sqlite3.Connection, where: str, params: tuple, order: str) -> list[Item]:
     rows = con.execute(
-        "SELECT i.*, group_concat(t.name, char(31)) AS tag_names"
+        "SELECT i.*, a.id AS aisle_ref, a.name AS aisle_name,"
+        " group_concat(t.name, char(31)) AS tag_names"
         " FROM grocery_items i"
+        " JOIN aisles a ON a.id = coalesce(i.aisle_id, (SELECT id FROM aisles WHERE name = ?))"
         " LEFT JOIN grocery_item_tags it ON it.item_id = i.id"
         " LEFT JOIN tags t ON t.id = it.tag_id"
         f" WHERE {where} GROUP BY i.id ORDER BY {order}",
-        params,
+        (OTHER_AISLE, *params),
     ).fetchall()
     return [
         Item(
@@ -213,6 +255,8 @@ def _items(con: sqlite3.Connection, where: str, params: tuple, order: str) -> li
             checked=bool(row["checked"]),
             added_by=row["added_by"],
             tags=sorted(row["tag_names"].split("\x1f")) if row["tag_names"] else [],
+            aisle_id=row["aisle_ref"],
+            aisle=row["aisle_name"],
         )
         for row in rows
     ]
@@ -220,13 +264,18 @@ def _items(con: sqlite3.Connection, where: str, params: tuple, order: str) -> li
 
 def list_items(con: sqlite3.Connection, tag: str = "", checked: bool = False) -> list[Item]:
     """`tag` filtre par étiquette ; « - » ne garde que les articles sans étiquette."""
-    order = "i.checked_at DESC, i.id DESC" if checked else "i.created_at, i.id"
+    order = "i.checked_at DESC, i.id DESC" if checked else "a.position, i.created_at, i.id"
     items = _items(con, "i.checked = ?", (int(checked),), order)
     if tag == "-":
         return [item for item in items if not item.tags]
     if tag:
         return [item for item in items if normalize(tag) in map(normalize, item.tags)]
     return items
+
+
+def by_aisle(items: list[Item]) -> list[tuple[str, list[Item]]]:
+    """Regroupe des articles déjà triés par rayon."""
+    return [(aisle, list(group)) for aisle, group in groupby(items, key=lambda i: i.aisle)]
 
 
 def get_item(con: sqlite3.Connection, item_id: int) -> Item | None:
@@ -240,8 +289,13 @@ def update_item(
     name: str | None = None,
     quantity: str | None = None,
     tags: list[str] | None = None,
+    aisle_id: int | None = None,
 ) -> Item:
-    """Change ce qui est fourni. `tags` remplace toutes les étiquettes."""
+    """Change ce qui est fourni. `tags` remplace toutes les étiquettes.
+
+    Un article renommé prend le rayon retenu pour son nouveau nom. Un rayon choisi est retenu
+    pour la prochaine fois.
+    """
     with con:
         row = con.execute("SELECT * FROM grocery_items WHERE id = ?", (item_id,)).fetchone()
         if row is None:
@@ -254,8 +308,9 @@ def update_item(
                     f"« {clash['name']} » est déjà sur la liste (article {clash['id']})."
                 )
             con.execute(
-                "UPDATE grocery_items SET name = ?, name_key = ? WHERE id = ?",
-                (display(name), key, item_id),
+                "UPDATE grocery_items SET name = ?, name_key = ?,"
+                " aisle_id = coalesce(?, aisle_id) WHERE id = ?",
+                (display(name), key, _remembered_aisle(con, key), item_id),
             )
         if quantity is not None:
             con.execute(
@@ -264,6 +319,17 @@ def update_item(
         if tags is not None:
             con.execute("DELETE FROM grocery_item_tags WHERE item_id = ?", (item_id,))
             _add_tags(con, item_id, [display(t) for t in tags if t.strip()])
+        if aisle_id is not None:
+            if not con.execute("SELECT 1 FROM aisles WHERE id = ?", (aisle_id,)).fetchone():
+                raise ValueError(f"Aucun rayon {aisle_id}.")
+            row = con.execute("SELECT * FROM grocery_items WHERE id = ?", (item_id,)).fetchone()
+            con.execute("UPDATE grocery_items SET aisle_id = ? WHERE id = ?", (aisle_id, item_id))
+            con.execute(
+                "INSERT INTO grocery_history (name_key, name, times, last_added_at, aisle_id)"
+                " VALUES (?, ?, 0, ?, ?)"
+                " ON CONFLICT (name_key) DO UPDATE SET aisle_id = excluded.aisle_id",
+                (row["name_key"], row["name"], now(), aisle_id),
+            )
         bump_version(con)
     return get_item(con, item_id)
 

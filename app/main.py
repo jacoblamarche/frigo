@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, closing
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -73,18 +74,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with closing(connect(db_path)) as con:
             yield con
 
-    def render(request: Request, template: str, context: dict) -> Response:
+    def render(request: Request, template: str, context: dict, status_code: int = 200) -> Response:
         return templates.TemplateResponse(
             request,
             template,
             {"person": request.state.person, "sections": SECTIONS, **context},
+            status_code=status_code,
         )
 
     def grocery_context(con, tag: str) -> dict:
+        items = groceries.list_items(con, tag)
         return {
             "section": "epicerie",
             "tag": tag,
-            "items": groceries.list_items(con, tag),
+            "items": items,
+            "by_aisle": groceries.by_aisle(items),
             "checked_items": groceries.list_items(con, checked=True),
             "tags": groceries.tag_counts(con),
             "total": len(groceries.list_items(con)),
@@ -93,11 +97,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "version": data_version(con),
         }
 
+    def groceries_url(tag: str) -> str:
+        return f"/epicerie?{urlencode({'etiquette': tag})}" if tag else "/epicerie"
+
     def back_to_groceries(request: Request, tag: str) -> Response:
         if request.headers.get("x-frigo-async"):
             return Response(status_code=204)
-        query = f"?{urlencode({'etiquette': tag})}" if tag else ""
-        return RedirectResponse(f"/epicerie{query}", status_code=303)
+        return RedirectResponse(groceries_url(tag), status_code=303)
+
+    def item_page(request: Request, con, item, tag: str, error: str = "") -> Response:
+        return render(
+            request,
+            "article.html",
+            {
+                "section": "epicerie",
+                "item": item,
+                "aisles": groceries.list_aisles(con),
+                "tag": tag,
+                "back": groceries_url(tag),
+                "error": error,
+            },
+            status_code=409 if error else 200,
+        )
 
     @app.get("/healthz")
     def healthz():
@@ -145,6 +166,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/epicerie/vider")
     def clear_groceries(request: Request, filtre: str = Form(""), con=Depends(get_db)):
         groceries.clear_checked(con)
+        return back_to_groceries(request, filtre)
+
+    @app.get("/epicerie/{item_id:int}")
+    def grocery_page(request: Request, item_id: int, filtre: str = "", con=Depends(get_db)):
+        item = groceries.get_item(con, item_id)
+        if item is None:
+            return RedirectResponse(groceries_url(filtre), status_code=303)
+        return item_page(request, con, item, filtre)
+
+    @app.post("/epicerie/{item_id:int}/modifier")
+    def edit_grocery(
+        request: Request,
+        item_id: int,
+        nom: str = Form(""),
+        quantite: str = Form(""),
+        etiquettes: str = Form(""),
+        rayon: int = Form(0),
+        filtre: str = Form(""),
+        con=Depends(get_db),
+    ):
+        item = groceries.get_item(con, item_id)
+        if item is None:
+            return back_to_groceries(request, filtre)
+        tags = [t.strip() for t in etiquettes.split(",") if t.strip()]
+        # Le formulaire renvoie toujours un rayon : seul un changement doit être retenu.
+        aisle_id = rayon if rayon and rayon != item.aisle_id else None
+        try:
+            groceries.update_item(con, item_id, nom, quantite, tags, aisle_id)
+        except ValueError as error:
+            draft = replace(item, name=nom, quantity=quantite, tags=tags, aisle_id=rayon)
+            return item_page(request, con, draft, filtre, str(error))
         return back_to_groceries(request, filtre)
 
     @app.get("/epicerie/stock")

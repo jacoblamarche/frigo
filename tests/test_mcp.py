@@ -137,3 +137,32 @@ def test_staples_are_left_out_unless_asked_for(mcp, tmp_path):
     forced = call(mcp, "add_groceries", items=[{"name": "Farine"}], include_staples=True)
     assert [a["name"] for a in forced["added"]] == ["Farine"]
     assert forced["skipped_staples"] == []
+
+
+def test_claude_files_items_in_aisles(mcp):
+    assert call(mcp, "list_groceries")["aisles"][:2] == ["Fruits et légumes", "Boulangerie"]
+
+    added = call(
+        mcp,
+        "add_groceries",
+        items=[{"name": "gruyère", "aisle": "fromages"}, {"name": "piles"}],
+    )["added"]
+    assert [a["aisle"] for a in added] == ["Fromages", "Autre"]
+
+    moved = call(mcp, "update_grocery", id=added[0]["id"], aisle="Produits laitiers et œufs")
+    assert moved["aisle"] == "Produits laitiers et œufs"
+
+
+def test_an_unknown_aisle_adds_nothing(mcp):
+    response = rpc(
+        mcp,
+        "tools/call",
+        {
+            "name": "add_groceries",
+            "arguments": {"items": [{"name": "lait"}, {"name": "gruyère", "aisle": "Crèmerie"}]},
+        },
+    )
+    result = response.json()["result"]
+    assert result["isError"]
+    assert "Rayon inconnu" in json.dumps(result, ensure_ascii=False)
+    assert call(mcp, "list_groceries")["to_buy"] == []

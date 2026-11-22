@@ -24,9 +24,12 @@
   {% endif %}
 
   {% if items %}
+  {% for aisle, aisle_items in by_aisle %}
+  <div class="section-title aisle"><span>{{ aisle }} · {{ aisle_items|length }}</span></div>
   <div class="list">
-    {% for item in items %}{% include "_epicerie_article.html" %}{% endfor %}
+    {% for item in aisle_items %}{% include "_epicerie_article.html" %}{% endfor %}
   </div>
+  {% endfor %}
   {% else %}
   <p class="empty">{{ "Rien avec cette étiquette." if tag else "Rien à acheter." }}</p>
   {% endif %}

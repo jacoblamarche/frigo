@@ -25,6 +25,10 @@ frigo tient la liste d'épicerie de Jacob et Catherine.
   « Farine ») pour qu'il soit reconnu.
 - Un article déjà à acheter n'est jamais dupliqué : la quantité s'ajoute (« 2 + 1 ») et les
   étiquettes se cumulent.
+- Donner à chaque article son rayon (`aisle`), parmi les `aisles` de list_groceries : le
+  gruyère va aux Fromages. Un article déjà classé garde le rayon qu'on lui a donné.
+- Pour déplacer un article quand on le demande, update_grocery avec `aisle` : le choix est
+  retenu pour la prochaine fois.
 - Les identifiants à passer aux autres outils viennent de list_groceries.
 """
 
@@ -36,6 +40,7 @@ class Grocery(BaseModel):
     tags: list[str]
     bought: bool
     added_by: str
+    aisle: str
 
 
 class AddedGrocery(Grocery):
@@ -46,12 +51,14 @@ class NewGrocery(BaseModel):
     name: str = Field(description="Nom de l'article, ex. « Oignons »")
     quantity: str = Field("", description="Quantité telle qu'écrite, ex. « 2 », « 400 g »")
     tags: list[str] = Field(default_factory=list, description="Étiquettes de cet article seul")
+    aisle: str = Field("", description="Rayon, parmi les `aisles` de list_groceries")
 
 
 class GroceryList(BaseModel):
     to_buy: list[Grocery]
     bought: list[Grocery]
     staples: list[str] = Field(description="Toujours en stock : jamais ajoutés par add_groceries")
+    aisles: list[str] = Field(description="Rayons, dans l'ordre où on parcourt l'épicerie")
 
 
 class AddResult(BaseModel):
@@ -72,6 +79,7 @@ def _out(item: groceries.Item) -> Grocery:
         tags=item.tags,
         bought=item.checked,
         added_by=item.added_by,
+        aisle=item.aisle,
     )
 
 
@@ -94,6 +102,7 @@ def build_mcp(db_path: Path) -> MCPServer:
                 if include_bought
                 else [],
                 staples=groceries.list_staples(con),
+                aisles=[a.name for a in groceries.list_aisles(con)],
             )
 
     @mcp.tool()
@@ -106,16 +115,20 @@ def build_mcp(db_path: Path) -> MCPServer:
         même : seulement si l'utilisateur demande lui-même ce produit (« il n'y a plus de
         farine »), jamais pour une recette.
         """
-        parsed = [
-            groceries.ParsedItem(
-                groceries.display(i.name),
-                i.quantity.strip(),
-                [groceries.display(t) for t in [*i.tags, tag] if t.strip()],
-            )
-            for i in items
-            if i.name.strip()
-        ]
         with db() as con:
+            try:
+                parsed = [
+                    groceries.ParsedItem(
+                        groceries.display(i.name),
+                        i.quantity.strip(),
+                        [groceries.display(t) for t in [*i.tags, tag] if t.strip()],
+                        groceries.find_aisle(con, i.aisle) if i.aisle.strip() else None,
+                    )
+                    for i in items
+                    if i.name.strip()
+                ]
+            except ValueError as error:
+                raise ToolError(str(error)) from error
             skipped = []
             if not include_staples:
                 parsed, skipped = groceries.split_staples(con, parsed)
@@ -135,12 +148,14 @@ def build_mcp(db_path: Path) -> MCPServer:
         name: str | None = None,
         quantity: str | None = None,
         tags: list[str] | None = None,
+        aisle: str | None = None,
     ) -> Grocery:
         """Modifie un article. Seuls les champs fournis changent ; `tags` remplace toutes ses
-        étiquettes."""
+        étiquettes. Le rayon choisi est retenu pour la prochaine fois."""
         with db() as con:
             try:
-                return _out(groceries.update_item(con, id, name, quantity, tags))
+                aisle_id = groceries.find_aisle(con, aisle) if aisle and aisle.strip() else None
+                return _out(groceries.update_item(con, id, name, quantity, tags, aisle_id))
             except (LookupError, ValueError) as error:
                 raise ToolError(str(error)) from error
 

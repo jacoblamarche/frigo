@@ -154,3 +154,90 @@ def test_staples_are_matched_on_the_normalized_name(con):
     assert [i.name for i in kept] == ["Farine de riz"]
     assert groceries.remove_staple(con, "PATES")
     assert groceries.list_staples(con) == ["Farine"]
+
+
+def aisle(con, name):
+    return groceries.find_aisle(con, name)
+
+
+def test_aisles_come_in_store_order_and_are_found_loosely(con):
+    names = [a.name for a in groceries.list_aisles(con)]
+    assert names[0] == "Fruits et légumes" and names[-1] == "Autre" and len(names) == 12
+    assert aisle(con, "produits laitiers et oeufs") == aisle(con, "Produits laitiers et œufs")
+    with pytest.raises(ValueError, match="Rayon inconnu"):
+        aisle(con, "Rayon 12")
+
+
+def test_an_unclassified_item_goes_to_other(con):
+    add(con, ParsedItem("Lait"))
+    assert groceries.list_items(con)[0].aisle == "Autre"
+
+
+def test_the_suggested_aisle_is_remembered(con):
+    [gruyere] = add(con, ParsedItem("Gruyère", aisle_id=aisle(con, "Fromages")))
+    groceries.toggle(con, gruyere)
+    groceries.clear_checked(con)
+
+    add(con, ParsedItem("gruyère"))
+
+    assert groceries.list_items(con)[0].aisle == "Fromages"
+
+
+def test_a_remembered_aisle_wins_over_a_suggestion(con):
+    [lait] = add(con, ParsedItem("Lait"))
+    groceries.update_item(con, lait, aisle_id=aisle(con, "Boissons"))
+    groceries.remove(con, lait)
+
+    add(con, ParsedItem("Lait", aisle_id=aisle(con, "Produits laitiers et œufs")))
+
+    assert groceries.list_items(con)[0].aisle == "Boissons"
+
+
+def test_a_suggestion_classifies_an_unclassified_item_already_on_the_list(con):
+    add(con, ParsedItem("Gruyère"))
+    add(con, ParsedItem("Gruyère", "200 g", aisle_id=aisle(con, "Fromages")))
+
+    assert [(i.quantity, i.aisle) for i in groceries.list_items(con)] == [("200 g", "Fromages")]
+
+
+def test_reclassifying_is_remembered(con):
+    [lait] = add(con, ParsedItem("Lait", aisle_id=aisle(con, "Produits laitiers et œufs")))
+    assert groceries.update_item(con, lait, aisle_id=aisle(con, "Boissons")).aisle == "Boissons"
+    groceries.remove(con, lait)
+
+    add(con, ParsedItem("Lait"))
+
+    assert groceries.list_items(con)[0].aisle == "Boissons"
+
+
+def test_a_renamed_item_takes_the_aisle_remembered_for_its_new_name(con):
+    [gruyere] = add(con, ParsedItem("Gruyère", aisle_id=aisle(con, "Fromages")))
+    groceries.remove(con, gruyere)
+    [fromage] = add(con, ParsedItem("Fromage"))
+
+    assert groceries.update_item(con, fromage, name="gruyère").aisle == "Fromages"
+
+
+def test_an_unknown_aisle_is_refused(con):
+    [lait] = add(con, ParsedItem("Lait"))
+    with pytest.raises(ValueError, match="Aucun rayon"):
+        groceries.update_item(con, lait, aisle_id=999)
+
+
+def test_the_list_is_grouped_by_aisle_in_store_order(con):
+    add(
+        con,
+        ParsedItem("Lait", aisle_id=aisle(con, "Produits laitiers et œufs")),
+        ParsedItem("Piles"),
+        ParsedItem("Pommes", tags=["Tarte"], aisle_id=aisle(con, "Fruits et légumes")),
+        ParsedItem("Beurre", tags=["Tarte"], aisle_id=aisle(con, "Produits laitiers et œufs")),
+    )
+
+    grouped = groceries.by_aisle(groceries.list_items(con))
+    assert [(a, [i.name for i in items]) for a, items in grouped] == [
+        ("Fruits et légumes", ["Pommes"]),
+        ("Produits laitiers et œufs", ["Lait", "Beurre"]),
+        ("Autre", ["Piles"]),
+    ]
+    tarte = groceries.by_aisle(groceries.list_items(con, "Tarte"))
+    assert [a for a, _ in tarte] == ["Fruits et légumes", "Produits laitiers et œufs"]

@@ -42,7 +42,7 @@ header .sub { color: var(--muted); font-size: 13px; margin-left: 8px; font-weigh
 .box { flex: none; width: 22px; height: 22px; margin-top: 1px; padding: 0; border: 2px solid #c9c4bb; border-radius: 6px; background: #fff; cursor: pointer; display: grid; place-items: center; }
 .done .box { background: var(--accent); border-color: var(--accent); }
 .done .box::after { content: ""; width: 6px; height: 11px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); }
-.item .what { flex: 1; min-width: 0; }
+.item .what { flex: 1; min-width: 0; color: inherit; text-decoration: none; }
 .item .name { font-weight: 600; overflow-wrap: anywhere; }
 .item .qty { color: var(--muted); font-weight: 400; }
 .done .name { text-decoration: line-through; color: var(--muted); font-weight: 500; }
@@ -53,6 +53,14 @@ header .sub { color: var(--muted); font-size: 13px; margin-left: 8px; font-weigh
 .by { font-size: 12px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .section-title { display: flex; justify-content: space-between; align-items: center; margin: 18px 2px 6px; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
 .section-title form { margin: 0; }
+.section-title.aisle { margin-top: 14px; }
+.chips + .section-title.aisle, .freq + .section-title.aisle { margin-top: 2px; }
+.sheet { display: grid; gap: 12px; }
+.sheet label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.sheet input, .sheet select { border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; font: inherit; color: var(--ink); background: var(--card); }
+.sheet .hint { margin: -4px 0 0; }
+.sheet .btn { padding: 12px 14px; }
+.error { background: #fdecec; color: var(--danger); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; }
 .empty { color: var(--muted); text-align: center; padding: 28px 0; }
 .intro { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
 

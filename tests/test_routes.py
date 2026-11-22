@@ -113,3 +113,94 @@ def test_people_can_still_add_a_staple_themselves(client):
     client.post("/epicerie/stock/ajouter", data={"nom": "farine"})
     client.post("/epicerie/ajouter", data={"texte": "farine"})
     assert 'aria-label="Cocher Farine"' in client.get("/epicerie").text
+
+
+def item_id(settings, name):
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        return next(item.id for item in groceries.list_items(con) if item.name == name)
+
+
+def aisle_id(settings, name):
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        return groceries.find_aisle(con, name)
+
+
+def test_the_list_is_shown_by_aisle(client, settings):
+    client.post("/epicerie/ajouter", data={"texte": "lait\npommes"})
+    client.post(
+        f"/epicerie/{item_id(settings, 'Pommes')}/modifier",
+        data={"nom": "Pommes", "rayon": aisle_id(settings, "Fruits et légumes")},
+    )
+
+    page = client.get("/epicerie").text
+    assert page.index("Fruits et légumes · 1") < page.index("Autre · 1")
+    assert page.index("Pommes") < page.index("Lait")
+
+
+def test_the_item_sheet_edits_everything(client, settings):
+    client.post("/epicerie/ajouter", data={"texte": "oignons 2 #lasagne"})
+    oignons = item_id(settings, "Oignons")
+
+    sheet = client.get(f"/epicerie/{oignons}?filtre=Lasagne").text
+    assert 'value="Oignons"' in sheet and 'value="Lasagne"' in sheet
+    assert '<a href="/epicerie?etiquette=Lasagne">' in sheet
+
+    response = client.post(
+        f"/epicerie/{oignons}/modifier",
+        data={
+            "nom": "oignons jaunes",
+            "quantite": "3",
+            "etiquettes": "Lasagne, soupe, ",
+            "rayon": aisle_id(settings, "Fruits et légumes"),
+            "filtre": "Lasagne",
+        },
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == "/epicerie?etiquette=Lasagne"
+
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        item = groceries.get_item(con, oignons)
+    assert (item.name, item.quantity, item.tags, item.aisle) == (
+        "Oignons jaunes",
+        "3",
+        ["Lasagne", "Soupe"],
+        "Fruits et légumes",
+    )
+
+
+def test_saving_the_sheet_without_touching_the_aisle_remembers_nothing(client, settings):
+    client.post("/epicerie/ajouter", data={"texte": "piles"})
+    piles = item_id(settings, "Piles")
+    client.post(
+        f"/epicerie/{piles}/modifier", data={"nom": "Piles", "rayon": aisle_id(settings, "Autre")}
+    )
+
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        groceries.remove(con, piles)
+        [added] = groceries.add_items(
+            con,
+            [
+                groceries.ParsedItem(
+                    "Piles", aisle_id=groceries.find_aisle(con, "Hygiène et maison")
+                )
+            ],
+            "Claude",
+        )
+        assert groceries.get_item(con, added.id).aisle == "Hygiène et maison"
+
+
+def test_the_sheet_refuses_a_name_already_on_the_list(client, settings):
+    client.post("/epicerie/ajouter", data={"texte": "oignons\néchalotes"})
+    oignons = item_id(settings, "Oignons")
+
+    response = client.post(
+        f"/epicerie/{oignons}/modifier", data={"nom": "Échalotes", "quantite": "4"}
+    )
+    assert response.status_code == 409
+    assert "déjà sur la liste" in response.text
+    assert 'value="Échalotes"' in response.text and 'value="4"' in response.text
+
+
+def test_the_sheet_of_a_removed_item_goes_back_to_the_list(client):
+    response = client.get("/epicerie/999", follow_redirects=False)
+    assert response.headers["location"] == "/epicerie"
