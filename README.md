@@ -14,6 +14,11 @@ Pour l'instant : la liste d'épicerie et son serveur MCP. Les tâches et les gro
 - « Coller une liste » ajoute une ligne par article, avec une étiquette commune facultative.
 - Un article déjà à acheter n'est jamais dupliqué : la quantité s'ajoute (« 2 + 1 ») et les
   étiquettes se cumulent.
+- La liste est groupée par rayon, dans l'ordre où on parcourt l'épicerie (Fruits et légumes
+  d'abord, Autre à la fin). Un article déjà classé retourne dans son rayon. Sinon, il prend
+  celui que Claude propose, ou va dans « Autre ».
+- Toucher un article ouvre sa fiche : nom, quantité, étiquettes et rayon. Le rayon choisi est
+  retenu pour la prochaine fois.
 - Un article coché reste barré jusqu'à « Vider les achetés ». Ceux qu'on ajoute souvent sont
   proposés en raccourci.
 - La page se met à jour toute seule quand l'autre personne modifie la liste.
@@ -29,9 +34,9 @@ directement.
 
 | Outil | Rôle |
 |---|---|
-| `list_groceries` | ce qu'il reste à acheter (et les achetés sur demande), filtrable par étiquette, plus les produits toujours en stock |
-| `add_groceries` | ajoute des articles, avec une étiquette commune (ex. la recette) ; même fusion que l'interface. Laisse de côté les produits toujours en stock, sauf `include_staples` |
-| `update_grocery` | change le nom, la quantité ou les étiquettes d'un article |
+| `list_groceries` | ce qu'il reste à acheter (et les achetés sur demande), filtrable par étiquette, plus les produits toujours en stock et les rayons |
+| `add_groceries` | ajoute des articles, avec une étiquette commune (ex. la recette) et un rayon par article ; même fusion que l'interface. Laisse de côté les produits toujours en stock, sauf `include_staples` |
+| `update_grocery` | change le nom, la quantité, les étiquettes ou le rayon d'un article |
 | `mark_bought`, `remove_groceries`, `clear_bought` | cocher, retirer, vider les achetés |
 
 Les articles ajoutés par le MCP portent une pastille « Claude » dans la liste. Les consignes

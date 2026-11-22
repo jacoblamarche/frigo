@@ -3,7 +3,7 @@
     <input type="hidden" name="filtre" value="{{ tag }}">
     <button class="box" aria-label="{{ 'Décocher' if item.checked else 'Cocher' }} {{ item.name }}"></button>
   </form>
-  <div class="what">
+  <a class="what" href="/epicerie/{{ item.id }}{{ '?filtre=' ~ tag|urlencode if tag }}" aria-label="Modifier {{ item.name }}">
     <div class="name">{{ item.name }}{% if item.quantity %} <span class="qty">· {{ item.quantity }}</span>{% endif %}</div>
     {% if item.tags or item.added_by == mcp_author %}
     <div class="tags">
@@ -11,7 +11,7 @@
       {%- if item.added_by == mcp_author %}<span class="by" title="Ajouté par {{ mcp_author }}">{{ mcp_author }}</span>{% endif -%}
     </div>
     {% endif %}
-  </div>
+  </a>
   <form method="post" action="/epicerie/{{ item.id }}/supprimer" data-async>
     <input type="hidden" name="filtre" value="{{ tag }}">
     <button class="remove" aria-label="Retirer {{ item.name }}">×</button>

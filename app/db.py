@@ -49,6 +49,31 @@ MIGRATIONS = [
         created_at TEXT NOT NULL
     );
     """,
+    # aisle_id NULL : article pas encore classé, affiché dans « Autre ». L'historique retient
+    # le rayon de chaque article. Un ordre propre à chaque magasin s'ajoutera à côté de
+    # `position`.
+    """
+    CREATE TABLE aisles (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        position INTEGER NOT NULL
+    );
+    INSERT INTO aisles (name, position) VALUES
+        ('Fruits et légumes', 1),
+        ('Boulangerie', 2),
+        ('Viandes et poissons', 3),
+        ('Produits laitiers et œufs', 4),
+        ('Fromages', 5),
+        ('Épicerie sèche', 6),
+        ('Condiments et épices', 7),
+        ('Collations', 8),
+        ('Boissons', 9),
+        ('Surgelés', 10),
+        ('Hygiène et maison', 11),
+        ('Autre', 12);
+    ALTER TABLE grocery_items ADD COLUMN aisle_id INTEGER REFERENCES aisles (id);
+    ALTER TABLE grocery_history ADD COLUMN aisle_id INTEGER REFERENCES aisles (id);
+    """,
 ]
 
 

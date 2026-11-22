@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ item.name }} · frigo{% endblock %}
+{% block heading %}Modifier l'article{% endblock %}
+{% block content %}
+<section class="screen">
+  <p class="hint"><a href="{{ back }}">← Épicerie</a></p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form class="sheet" method="post" action="/epicerie/{{ item.id }}/modifier">
+    <label>Nom <input name="nom" value="{{ item.name }}" required autocomplete="off"></label>
+    <label>Quantité <input name="quantite" value="{{ item.quantity }}" placeholder="Ex. 2 L" autocomplete="off"></label>
+    <label>Étiquettes <input name="etiquettes" value="{{ item.tags|join(', ') }}" placeholder="Séparées par des virgules" autocomplete="off"></label>
+    <label>Rayon
+      <select name="rayon">
+        {% for aisle in aisles %}
+        <option value="{{ aisle.id }}" {{ 'selected' if aisle.id == item.aisle_id }}>{{ aisle.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="hint">Le rayon est retenu : « {{ item.name }} » y retournera la prochaine fois.</p>
+    <input type="hidden" name="filtre" value="{{ tag }}">
+    <button class="btn">Enregistrer</button>
+  </form>
+</section>
+{% endblock %}
