@@ -1,6 +1,8 @@
+import hashlib
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, closing
 from dataclasses import replace
+from functools import cache
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -20,6 +22,14 @@ PUBLIC_PATHS = ("/healthz", "/static/")
 MCP_PATH = "/mcp"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 SECTIONS = [{"id": "epicerie", "label": "Épicerie", "path": "/epicerie"}]
+
+
+@cache
+def static_url(name: str) -> str:
+    # Cloudflare et les navigateurs gardent /static/ en cache : l'empreinte du contenu change
+    # l'URL à chaque version du fichier.
+    digest = hashlib.sha256((APP_DIR / "static" / name).read_bytes()).hexdigest()[:10]
+    return f"/static/{name}?v={digest}"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -50,6 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.router.routes.extend(mcp_routes)
     templates = Jinja2Templates(directory=APP_DIR / "templates")
     templates.env.globals["mcp_author"] = AUTHOR
+    templates.env.globals["static"] = static_url
 
     @app.middleware("http")
     async def identify(request: Request, call_next):

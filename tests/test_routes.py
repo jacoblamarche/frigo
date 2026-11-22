@@ -1,3 +1,4 @@
+import re
 from contextlib import closing
 
 from fastapi.testclient import TestClient
@@ -204,3 +205,9 @@ def test_the_sheet_refuses_a_name_already_on_the_list(client, settings):
 def test_the_sheet_of_a_removed_item_goes_back_to_the_list(client):
     response = client.get("/epicerie/999", follow_redirects=False)
     assert response.headers["location"] == "/epicerie"
+
+
+def test_static_files_are_linked_with_a_content_version(client):
+    page = client.get("/epicerie").text
+    href = re.search(r'href="(/static/app\.css\?v=[0-9a-f]{10})"', page)[1]
+    assert client.get(href).status_code == 200
