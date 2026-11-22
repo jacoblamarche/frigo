@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Recettes · frigo{% endblock %}
+{% block heading %}Recettes{% if recipes %} <span class="sub">{{ recipes|length }}</span>{% endif %}{% endblock %}
+{% block content %}
+<section class="screen">
+  <p class="intro">Les recettes que {{ mcp_author }} a importées, avec leurs étapes résumées.</p>
+  {% if recipes %}
+  <div class="list recipes">
+    {% for r in recipes %}
+    <a class="item" href="/recettes/{{ r.id }}">
+      <div class="what">
+        <div class="name">{{ r.name }}</div>
+        {% set meta = [r.servings, r.time, r.site]|select|list %}
+        {% if meta %}<div class="meta">{{ meta|join(' · ') }}</div>{% endif %}
+      </div>
+      <span class="go" aria-hidden="true">›</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Aucune recette pour l'instant. Envoyez une recette à {{ mcp_author }} : ses ingrédients iront à l'épicerie et sa fiche, ici.</p>
+  {% endif %}
+</section>
+{% endblock %}

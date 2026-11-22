@@ -5,7 +5,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from app import groceries
+from app import groceries, recipes
 from app.db import connect
 
 AUTHOR = "Claude"
@@ -15,6 +15,9 @@ frigo tient la liste d'épicerie de Jacob et Catherine.
 
 - Pour une recette, ajouter tous les ingrédients en un seul appel à add_groceries, avec le nom
   de la recette dans `tag`.
+- Dans ce même appel, joindre `recipe` : frigo en garde une fiche, consultable dans l'app. Y
+  mettre le lien d'origine, tous les ingrédients tels qu'écrits (préparation et produits en
+  stock compris) et les étapes reformulées brièvement, sans recopier le texte du site.
 - Nommer l'article comme on le cherche à l'épicerie, sans la préparation : « oignons
   émincés » devient « Oignons ». La quantité reste telle qu'écrite (« 2 tasses », « 400 g »).
 - Avant d'ajouter, consulter list_groceries : si un article équivalent y est déjà (« Oignons »
@@ -54,6 +57,21 @@ class NewGrocery(BaseModel):
     aisle: str = Field("", description="Rayon, parmi les `aisles` de list_groceries")
 
 
+class RecipeIngredient(BaseModel):
+    name: str = Field(description="Tel qu'écrit dans la recette, ex. « oignons émincés »")
+    quantity: str = Field("", description="Ex. « 2 », « 1 boîte (796 ml) »")
+
+
+class NewRecipe(BaseModel):
+    url: str = Field("", description="Lien de la recette d'origine (http ou https)")
+    servings: str = Field("", description="Ex. « 6 portions »")
+    time: str = Field("", description="Temps total, ex. « 1 h 30 »")
+    ingredients: list[RecipeIngredient] = Field(
+        description="Tous les ingrédients, y compris ceux toujours en stock"
+    )
+    steps: list[str] = Field(description="Étapes reformulées en peu de mots, une par élément")
+
+
 class GroceryList(BaseModel):
     to_buy: list[Grocery]
     bought: list[Grocery]
@@ -64,6 +82,7 @@ class GroceryList(BaseModel):
 class AddResult(BaseModel):
     added: list[AddedGrocery]
     skipped_staples: list[str] = Field(description="Laissés de côté : toujours en stock")
+    recipe: str = Field("", description="Nom de la fiche de recette enregistrée, s'il y a lieu")
 
 
 class IdsResult(BaseModel):
@@ -107,16 +126,27 @@ def build_mcp(db_path: Path) -> MCPServer:
 
     @mcp.tool()
     def add_groceries(
-        items: list[NewGrocery], tag: str = "", include_staples: bool = False
+        items: list[NewGrocery],
+        tag: str = "",
+        include_staples: bool = False,
+        recipe: NewRecipe | None = None,
     ) -> AddResult:
         """Ajoute des articles à l'épicerie. `tag` s'applique à tous, ex. le nom d'une recette.
 
         Les produits toujours en stock sont laissés de côté. `include_staples` les ajoute quand
         même : seulement si l'utilisateur demande lui-même ce produit (« il n'y a plus de
         farine »), jamais pour une recette.
+
+        `recipe` enregistre la fiche de la recette sous le nom de `tag`, ou remplace celle qui
+        porte déjà ce nom.
         """
+        if recipe and not tag.strip():
+            raise ToolError("`tag` est obligatoire avec `recipe` : c'est le nom de la recette.")
         with db() as con:
             try:
+                # Vérifié avant d'ajouter quoi que ce soit, pour ne pas laisser un ajout à moitié.
+                if recipe:
+                    recipes.check_url(recipe.url)
                 parsed = [
                     groceries.ParsedItem(
                         groceries.display(i.name),
@@ -132,6 +162,22 @@ def build_mcp(db_path: Path) -> MCPServer:
             skipped = []
             if not include_staples:
                 parsed, skipped = groceries.split_staples(con, parsed)
+            saved = (
+                recipes.save(
+                    con,
+                    tag,
+                    url=recipe.url,
+                    servings=recipe.servings,
+                    time=recipe.time,
+                    ingredients=[
+                        recipes.Ingredient(i.quantity, i.name) for i in recipe.ingredients
+                    ],
+                    steps=recipe.steps,
+                    added_by=AUTHOR,
+                )
+                if recipe
+                else None
+            )
             return AddResult(
                 added=[
                     AddedGrocery(
@@ -140,6 +186,7 @@ def build_mcp(db_path: Path) -> MCPServer:
                     for a in groceries.add_items(con, parsed, AUTHOR)
                 ],
                 skipped_staples=[item.name for item in skipped],
+                recipe=saved.name if saved else "",
             )
 
     @mcp.tool()

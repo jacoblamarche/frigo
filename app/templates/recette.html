@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ recipe.name }} · frigo{% endblock %}
+{% block heading %}Recette{% endblock %}
+{% block content %}
+<section class="screen recipe">
+  <p class="hint"><a href="/recettes">← Recettes</a></p>
+  <h2>{{ recipe.name }}</h2>
+  {% if recipe.servings or recipe.time %}
+  <div class="facts">{% if recipe.servings %}<span>{{ recipe.servings }}</span>{% endif %}{% if recipe.time %}<span>{{ recipe.time }}</span>{% endif %}</div>
+  {% endif %}
+  {% if recipe.url %}
+  <a class="source" href="{{ recipe.url }}" target="_blank" rel="noopener noreferrer">Recette originale · {{ recipe.site }} ↗</a>
+  {% endif %}
+
+  {% if recipe.ingredients %}
+  <div class="section-title"><span>Ingrédients · {{ recipe.ingredients|length }}</span></div>
+  <ul class="ing">
+    {% for i in recipe.ingredients %}
+    <li>{% if i.quantity %}<span class="q">{{ i.quantity }}</span> {% endif %}{{ i.name }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if recipe.steps %}
+  <div class="section-title"><span>Étapes · {{ recipe.steps|length }}</span></div>
+  <ol class="steps">
+    {% for step in recipe.steps %}<li>{{ step }}</li>{% endfor %}
+  </ol>
+  {% endif %}
+
+  <p class="awake" data-wake hidden>L'écran reste allumé pendant que la recette est ouverte.</p>
+  <form method="post" action="/recettes/{{ recipe.id }}/supprimer" data-confirm="Supprimer la fiche « {{ recipe.name }} » ? Les articles de l'épicerie ne changent pas.">
+    <button class="btn ghost delete">Supprimer la fiche</button>
+  </form>
+</section>
+{% endblock %}

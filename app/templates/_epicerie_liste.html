@@ -23,6 +23,10 @@
   </div>
   {% endif %}
 
+  {% if recipe %}
+  <a class="banner" href="/recettes/{{ recipe.id }}">{% include "icons/recettes.svg" %} Voir la recette<span class="go" aria-hidden="true">›</span></a>
+  {% endif %}
+
   {% if items %}
   {% for aisle, aisle_items in by_aisle %}
   <div class="section-title aisle"><span>{{ aisle }} · {{ aisle_items|length }}</span></div>

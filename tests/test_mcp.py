@@ -4,7 +4,7 @@ from contextlib import closing
 import pytest
 from fastapi.testclient import TestClient
 
-from app import groceries
+from app import groceries, recipes
 from app.db import connect
 from app.main import create_app
 from app.settings import Settings
@@ -165,4 +165,59 @@ def test_an_unknown_aisle_adds_nothing(mcp):
     result = response.json()["result"]
     assert result["isError"]
     assert "Rayon inconnu" in json.dumps(result, ensure_ascii=False)
+    assert call(mcp, "list_groceries")["to_buy"] == []
+
+
+def test_a_recipe_card_is_kept_with_every_ingredient(mcp, tmp_path):
+    with closing(connect(tmp_path / "frigo.sqlite3")) as con:
+        groceries.add_staple(con, "Farine", "Jacob")
+
+    result = call(
+        mcp,
+        "add_groceries",
+        items=[{"name": "oignons", "quantity": "2"}, {"name": "farine", "quantity": "1 tasse"}],
+        tag="Pain aux oignons",
+        recipe={
+            "url": "https://example.com/pain",
+            "servings": "1 pain",
+            "ingredients": [
+                {"name": "oignons émincés", "quantity": "2"},
+                {"name": "farine tout usage", "quantity": "1 tasse"},
+            ],
+            "steps": ["Pétrir.", "Cuire 40 min."],
+        },
+    )
+    assert result["recipe"] == "Pain aux oignons"
+    assert result["skipped_staples"] == ["Farine"]
+
+    with closing(connect(tmp_path / "frigo.sqlite3")) as con:
+        card = recipes.by_name(con, "pain aux oignons")
+    assert [i.name for i in card.ingredients] == ["oignons émincés", "farine tout usage"]
+    assert (card.url, card.servings, card.steps, card.added_by) == (
+        "https://example.com/pain",
+        "1 pain",
+        ["Pétrir.", "Cuire 40 min."],
+        "Claude",
+    )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"recipe": {"ingredients": [], "steps": []}}, "`tag` est obligatoire"),
+        (
+            {"tag": "Pain", "recipe": {"url": "javascript:x", "ingredients": [], "steps": []}},
+            "Lien invalide",
+        ),
+    ],
+)
+def test_a_bad_recipe_adds_nothing(mcp, arguments, message):
+    response = rpc(
+        mcp,
+        "tools/call",
+        {"name": "add_groceries", "arguments": {"items": [{"name": "lait"}], **arguments}},
+    )
+    result = response.json()["result"]
+    assert result["isError"]
+    assert message in json.dumps(result, ensure_ascii=False)
     assert call(mcp, "list_groceries")["to_buy"] == []

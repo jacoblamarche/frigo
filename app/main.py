@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app import groceries
+from app import groceries, recipes
 from app.db import connect, data_version, migrate
 from app.mcp_server import AUTHOR, build_mcp
 from app.settings import Settings, bearer_ok, same_origin
@@ -21,7 +21,10 @@ APP_DIR = Path(__file__).parent
 PUBLIC_PATHS = ("/healthz", "/static/")
 MCP_PATH = "/mcp"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-SECTIONS = [{"id": "epicerie", "label": "Épicerie", "path": "/epicerie"}]
+SECTIONS = [
+    {"id": "epicerie", "label": "Épicerie", "path": "/epicerie"},
+    {"id": "recettes", "label": "Recettes", "path": "/recettes"},
+]
 
 
 @cache
@@ -98,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "section": "epicerie",
             "tag": tag,
+            "recipe": recipes.by_name(con, tag) if tag and tag != "-" else None,
             "items": items,
             "by_aisle": groceries.by_aisle(items),
             "checked_items": groceries.list_items(con, checked=True),
@@ -123,6 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {
                 "section": "epicerie",
                 "item": item,
+                "recipes": recipes.for_tags(con, item.tags),
                 "aisles": groceries.list_aisles(con),
                 "tag": tag,
                 "back": groceries_url(tag),
@@ -225,5 +230,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def staples_remove(nom: str = Form(""), con=Depends(get_db)):
         groceries.remove_staple(con, nom)
         return RedirectResponse("/epicerie/stock", status_code=303)
+
+    @app.get("/recettes")
+    def recipes_page(request: Request, con=Depends(get_db)):
+        return render(
+            request, "recettes.html", {"section": "recettes", "recipes": recipes.list_recipes(con)}
+        )
+
+    @app.get("/recettes/{recipe_id:int}")
+    def recipe_page(request: Request, recipe_id: int, con=Depends(get_db)):
+        recipe = recipes.get(con, recipe_id)
+        if recipe is None:
+            return RedirectResponse("/recettes", status_code=303)
+        return render(request, "recette.html", {"section": "recettes", "recipe": recipe})
+
+    @app.post("/recettes/{recipe_id:int}/supprimer")
+    def recipe_delete(recipe_id: int, con=Depends(get_db)):
+        recipes.delete(con, recipe_id)
+        return RedirectResponse("/recettes", status_code=303)
 
     return app

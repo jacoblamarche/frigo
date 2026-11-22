@@ -3,7 +3,7 @@ from contextlib import closing
 
 from fastapi.testclient import TestClient
 
-from app import groceries
+from app import groceries, recipes
 from app.db import connect
 from app.main import create_app
 from app.settings import Settings
@@ -211,3 +211,62 @@ def test_static_files_are_linked_with_a_content_version(client):
     page = client.get("/epicerie").text
     href = re.search(r'href="(/static/app\.css\?v=[0-9a-f]{10})"', page)[1]
     assert client.get(href).status_code == 200
+
+
+def save_lasagne(settings, url="https://www.ricardocuisine.com/recettes/lasagne"):
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        return recipes.save(
+            con,
+            "Lasagne",
+            url=url,
+            servings="6 portions",
+            ingredients=[recipes.Ingredient("2", "oignons émincés")],
+            steps=["Dorer le bœuf.", "Monter la lasagne."],
+            added_by="Claude",
+        ).id
+
+
+def test_recipes_tab_lists_the_cards(client, settings):
+    assert "Aucune recette" in client.get("/recettes").text
+    recipe_id = save_lasagne(settings)
+    page = client.get("/recettes").text
+    assert f'href="/recettes/{recipe_id}"' in page
+    assert "6 portions · ricardocuisine.com" in page
+    assert 'href="/recettes" class="on"' in page
+
+
+def test_the_recipe_card_shows_ingredients_steps_and_source(client, settings):
+    page = client.get(f"/recettes/{save_lasagne(settings)}").text
+    assert '<li><span class="q">2</span> oignons émincés</li>' in page
+    assert "<li>Monter la lasagne.</li>" in page
+    assert 'href="https://www.ricardocuisine.com/recettes/lasagne" target="_blank"' in page
+    assert "Recette originale · ricardocuisine.com" in page
+
+
+def test_a_missing_recipe_goes_back_to_the_list(client):
+    response = client.get("/recettes/999", follow_redirects=False)
+    assert response.headers["location"] == "/recettes"
+
+
+def test_the_grocery_filter_and_the_item_sheet_link_to_the_recipe(client, settings):
+    recipe_id = save_lasagne(settings)
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        [added] = groceries.add_items(con, groceries.parse_text("oignons", "lasagne"), "Jacob")
+    link = f'href="/recettes/{recipe_id}"'
+    assert link in client.get("/epicerie?etiquette=Lasagne").text
+    assert link not in client.get("/epicerie").text
+    assert link in client.get(f"/epicerie/{added.id}").text
+
+
+def test_deleting_a_recipe_keeps_the_groceries(client, settings):
+    recipe_id = save_lasagne(settings)
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        groceries.add_items(con, groceries.parse_text("oignons", "lasagne"), "Jacob")
+    response = client.post(
+        f"/recettes/{recipe_id}/supprimer",
+        headers={"Origin": "http://testserver"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == "/recettes"
+    assert "Aucune recette" in client.get("/recettes").text
+    assert "Oignons" in client.get("/epicerie?etiquette=Lasagne").text
