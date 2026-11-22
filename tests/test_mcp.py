@@ -1,8 +1,11 @@
 import json
+from contextlib import closing
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import groceries
+from app.db import connect
 from app.main import create_app
 from app.settings import Settings
 
@@ -68,14 +71,15 @@ def test_recipe_ingredients_land_with_the_recipe_tag(mcp):
             {"name": "bœuf haché", "quantity": "1 lb", "tags": ["souper"]},
         ],
         tag="lasagne",
-    )
+    )["added"]
     assert [(a["name"], a["quantity"], a["tags"], a["merged"]) for a in added] == [
         ("Oignons", "2", ["Lasagne"], False),
         ("Bœuf haché", "1 lb", ["Lasagne", "Souper"], False),
     ]
     assert {a["added_by"] for a in added} == {"Claude"}
 
-    again = call(mcp, "add_groceries", items=[{"name": "Oignons", "quantity": "1"}], tag="soupe")
+    result = call(mcp, "add_groceries", items=[{"name": "Oignons", "quantity": "1"}], tag="soupe")
+    again = result["added"]
     assert (again[0]["quantity"], again[0]["tags"], again[0]["merged"]) == (
         "2 + 1",
         ["Lasagne", "Soupe"],
@@ -84,10 +88,8 @@ def test_recipe_ingredients_land_with_the_recipe_tag(mcp):
 
 
 def test_list_mark_remove_and_clear(mcp):
-    lait, oeufs, cafe = (
-        a["id"]
-        for a in call(mcp, "add_groceries", items=[{"name": n} for n in ("lait", "œufs", "café")])
-    )
+    result = call(mcp, "add_groceries", items=[{"name": n} for n in ("lait", "œufs", "café")])
+    lait, oeufs, cafe = (a["id"] for a in result["added"])
 
     assert call(mcp, "mark_bought", ids=[lait, 999]) == {"done": [lait], "skipped": [999]}
     assert call(mcp, "remove_groceries", ids=[cafe]) == {"done": [cafe], "skipped": []}
@@ -103,7 +105,7 @@ def test_list_mark_remove_and_clear(mcp):
 def test_update_errors_come_back_as_tool_errors(mcp):
     [oignons, echalotes] = call(
         mcp, "add_groceries", items=[{"name": "oignons"}, {"name": "échalotes"}]
-    )
+    )["added"]
     response = rpc(
         mcp,
         "tools/call",
@@ -121,3 +123,17 @@ def test_items_added_by_claude_show_a_badge(mcp):
     call(mcp, "add_groceries", items=[{"name": "lait"}])
     page = mcp.get("/epicerie").text
     assert 'class="by"' in page and "Ajouté par Claude" in page
+
+
+def test_staples_are_left_out_unless_asked_for(mcp, tmp_path):
+    with closing(connect(tmp_path / "frigo.sqlite3")) as con:
+        groceries.add_staple(con, "Farine", "Jacob")
+
+    result = call(mcp, "add_groceries", items=[{"name": "farine"}, {"name": "sucre"}], tag="Gâteau")
+    assert [a["name"] for a in result["added"]] == ["Sucre"]
+    assert result["skipped_staples"] == ["Farine"]
+    assert call(mcp, "list_groceries")["staples"] == ["Farine"]
+
+    forced = call(mcp, "add_groceries", items=[{"name": "Farine"}], include_staples=True)
+    assert [a["name"] for a in forced["added"]] == ["Farine"]
+    assert forced["skipped_staples"] == []

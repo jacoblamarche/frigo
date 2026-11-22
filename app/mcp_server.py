@@ -19,6 +19,10 @@ frigo tient la liste d'épicerie de Jacob et Catherine.
   émincés » devient « Oignons ». La quantité reste telle qu'écrite (« 2 tasses », « 400 g »).
 - Avant d'ajouter, consulter list_groceries : si un article équivalent y est déjà (« Oignons »
   pour « oignons jaunes »), reprendre son nom exact pour que les deux fusionnent.
+- Les produits de `staples` sont toujours en stock (achetés en vrac, par exemple) :
+  add_groceries les laisse de côté et les renvoie dans `skipped_staples`, ce qu'il faut dire à
+  l'utilisateur. Nommer l'ingrédient comme le produit en stock (« farine tout usage » →
+  « Farine ») pour qu'il soit reconnu.
 - Un article déjà à acheter n'est jamais dupliqué : la quantité s'ajoute (« 2 + 1 ») et les
   étiquettes se cumulent.
 - Les identifiants à passer aux autres outils viennent de list_groceries.
@@ -47,6 +51,12 @@ class NewGrocery(BaseModel):
 class GroceryList(BaseModel):
     to_buy: list[Grocery]
     bought: list[Grocery]
+    staples: list[str] = Field(description="Toujours en stock : jamais ajoutés par add_groceries")
+
+
+class AddResult(BaseModel):
+    added: list[AddedGrocery]
+    skipped_staples: list[str] = Field(description="Laissés de côté : toujours en stock")
 
 
 class IdsResult(BaseModel):
@@ -83,11 +93,19 @@ def build_mcp(db_path: Path) -> MCPServer:
                 bought=[_out(i) for i in groceries.list_items(con, checked=True)]
                 if include_bought
                 else [],
+                staples=groceries.list_staples(con),
             )
 
     @mcp.tool()
-    def add_groceries(items: list[NewGrocery], tag: str = "") -> list[AddedGrocery]:
-        """Ajoute des articles à l'épicerie. `tag` s'applique à tous, ex. le nom d'une recette."""
+    def add_groceries(
+        items: list[NewGrocery], tag: str = "", include_staples: bool = False
+    ) -> AddResult:
+        """Ajoute des articles à l'épicerie. `tag` s'applique à tous, ex. le nom d'une recette.
+
+        Les produits toujours en stock sont laissés de côté. `include_staples` les ajoute quand
+        même : seulement si l'utilisateur demande lui-même ce produit (« il n'y a plus de
+        farine »), jamais pour une recette.
+        """
         parsed = [
             groceries.ParsedItem(
                 groceries.display(i.name),
@@ -98,10 +116,18 @@ def build_mcp(db_path: Path) -> MCPServer:
             if i.name.strip()
         ]
         with db() as con:
-            return [
-                AddedGrocery(**_out(groceries.get_item(con, a.id)).model_dump(), merged=a.merged)
-                for a in groceries.add_items(con, parsed, AUTHOR)
-            ]
+            skipped = []
+            if not include_staples:
+                parsed, skipped = groceries.split_staples(con, parsed)
+            return AddResult(
+                added=[
+                    AddedGrocery(
+                        **_out(groceries.get_item(con, a.id)).model_dump(), merged=a.merged
+                    )
+                    for a in groceries.add_items(con, parsed, AUTHOR)
+                ],
+                skipped_staples=[item.name for item in skipped],
+            )
 
     @mcp.tool()
     def update_grocery(

@@ -308,3 +308,38 @@ def frequent(con: sqlite3.Connection, limit: int = 6) -> list[str]:
             (limit,),
         )
     ]
+
+
+def list_staples(con: sqlite3.Connection) -> list[str]:
+    return [row["name"] for row in con.execute("SELECT name FROM staples ORDER BY name_key")]
+
+
+def add_staple(con: sqlite3.Connection, name: str, added_by: str) -> bool:
+    if not name.strip():
+        return False
+    with con:
+        return bool(
+            con.execute(
+                "INSERT INTO staples (name_key, name, added_by, created_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (name_key) DO NOTHING",
+                (normalize(name), display(name), added_by, now()),
+            ).rowcount
+        )
+
+
+def remove_staple(con: sqlite3.Connection, name: str) -> bool:
+    with con:
+        return bool(
+            con.execute("DELETE FROM staples WHERE name_key = ?", (normalize(name),)).rowcount
+        )
+
+
+def split_staples(
+    con: sqlite3.Connection, items: list[ParsedItem]
+) -> tuple[list[ParsedItem], list[ParsedItem]]:
+    """Sépare les produits toujours en stock (nom exact, à la casse et aux accents près)."""
+    keys = {row[0] for row in con.execute("SELECT name_key FROM staples")}
+    return (
+        [item for item in items if normalize(item.name) not in keys],
+        [item for item in items if normalize(item.name) in keys],
+    )

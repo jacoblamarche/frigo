@@ -41,6 +41,14 @@ MIGRATIONS = [
     CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
     INSERT INTO meta (key, value) VALUES ('version', 0);
     """,
+    """
+    CREATE TABLE staples (
+        name_key TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        added_by TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

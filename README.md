@@ -17,6 +17,9 @@ Pour l'instant : la liste d'épicerie et son serveur MCP. Les tâches et les gro
 - Un article coché reste barré jusqu'à « Vider les achetés ». Ceux qu'on ajoute souvent sont
   proposés en raccourci.
 - La page se met à jour toute seule quand l'autre personne modifie la liste.
+- « Toujours en stock » : les produits qu'on a toujours (achetés en vrac, par exemple). Claude
+  ne les ajoute jamais, même pour une recette, sauf si on lui dit qu'il en manque. On peut
+  toujours les ajouter soi-même.
 
 ## Serveur MCP
 
@@ -26,8 +29,8 @@ directement.
 
 | Outil | Rôle |
 |---|---|
-| `list_groceries` | ce qu'il reste à acheter (et les achetés sur demande), filtrable par étiquette |
-| `add_groceries` | ajoute des articles, avec une étiquette commune (ex. la recette) ; même fusion que l'interface |
+| `list_groceries` | ce qu'il reste à acheter (et les achetés sur demande), filtrable par étiquette, plus les produits toujours en stock |
+| `add_groceries` | ajoute des articles, avec une étiquette commune (ex. la recette) ; même fusion que l'interface. Laisse de côté les produits toujours en stock, sauf `include_staples` |
 | `update_grocery` | change le nom, la quantité ou les étiquettes d'un article |
 | `mark_bought`, `remove_groceries`, `clear_bought` | cocher, retirer, vider les achetés |
 

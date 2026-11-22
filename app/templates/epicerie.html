@@ -8,7 +8,7 @@
     <input type="hidden" name="filtre" value="{{ tag }}">
     <button class="btn">Ajouter</button>
   </form>
-  <p class="hint">« lait 2 L » ou « oignons 2 #lasagne » · <a href="#coller" data-toggle="paste">Coller une liste</a></p>
+  <p class="hint">« lait 2 L » ou « oignons 2 #lasagne » · <a href="#coller" data-toggle="paste">Coller une liste</a> · <a href="/epicerie/stock">Toujours en stock</a></p>
   <form class="paste" id="paste" method="post" action="/epicerie/ajouter" data-async data-reset>
     <textarea name="texte" placeholder="Un article par ligne&#10;3 oignons&#10;1 lb bœuf haché&#10;pâtes à lasagne" aria-label="Liste d'articles"></textarea>
     <div class="row">

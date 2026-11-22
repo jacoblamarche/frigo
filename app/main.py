@@ -147,4 +147,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         groceries.clear_checked(con)
         return back_to_groceries(request, filtre)
 
+    @app.get("/epicerie/stock")
+    def staples_page(request: Request, con=Depends(get_db)):
+        return render(
+            request, "stock.html", {"section": "epicerie", "staples": groceries.list_staples(con)}
+        )
+
+    @app.post("/epicerie/stock/ajouter")
+    def staples_add(request: Request, nom: str = Form(""), con=Depends(get_db)):
+        groceries.add_staple(con, nom, request.state.person)
+        return RedirectResponse("/epicerie/stock", status_code=303)
+
+    @app.post("/epicerie/stock/retirer")
+    def staples_remove(nom: str = Form(""), con=Depends(get_db)):
+        groceries.remove_staple(con, nom)
+        return RedirectResponse("/epicerie/stock", status_code=303)
+
     return app
