@@ -74,6 +74,23 @@ MIGRATIONS = [
     ALTER TABLE grocery_items ADD COLUMN aisle_id INTEGER REFERENCES aisles (id);
     ALTER TABLE grocery_history ADD COLUMN aisle_id INTEGER REFERENCES aisles (id);
     """,
+    # Une fiche par étiquette de recette, rattachée par le nom normalisé : elle reste quand les
+    # articles sont vidés. `ingredients` et `steps` sont des listes JSON.
+    """
+    CREATE TABLE recipes (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL UNIQUE,
+        url TEXT NOT NULL DEFAULT '',
+        servings TEXT NOT NULL DEFAULT '',
+        time TEXT NOT NULL DEFAULT '',
+        ingredients TEXT NOT NULL,
+        steps TEXT NOT NULL,
+        added_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

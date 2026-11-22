@@ -17,6 +17,15 @@ async function refresh() {
   }
 }
 
+// En phase de capture, pour passer avant l'envoi asynchrone ci-dessous.
+document.addEventListener('submit', (event) => {
+  const message = event.target.dataset.confirm;
+  if (message && !confirm(message)) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}, true);
+
 document.addEventListener('submit', async (event) => {
   const form = event.target;
   if (!form.matches('form[data-async]')) return;
@@ -37,3 +46,12 @@ document.addEventListener('click', (event) => {
 
 setInterval(() => document.visibilityState === 'visible' && refresh(), 5000);
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && refresh());
+
+// Garde l'écran allumé pendant qu'on cuisine. Le navigateur relâche le verrou quand la page est
+// cachée : on le redemande au retour.
+const awake = document.querySelector('[data-wake]');
+if (awake && 'wakeLock' in navigator) {
+  const lock = () => navigator.wakeLock.request('screen').then(() => { awake.hidden = false; }, () => {});
+  lock();
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && lock());
+}
