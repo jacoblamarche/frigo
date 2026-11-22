@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Toujours en stock · frigo{% endblock %}
+{% block heading %}Toujours en stock{% endblock %}
+{% block content %}
+<section class="screen">
+  <p class="hint"><a href="/epicerie">← Épicerie</a></p>
+  <p class="intro">Claude n'ajoute jamais ces produits à l'épicerie, même pour une recette. Vous pouvez toujours les ajouter vous-mêmes le jour où il en manque.</p>
+  <form class="add" method="post" action="/epicerie/stock/ajouter">
+    <input name="nom" placeholder="Ex. Farine" autocomplete="off" required aria-label="Produit">
+    <button class="btn">Ajouter</button>
+  </form>
+  {% if staples %}
+  <div class="list">
+    {% for name in staples %}
+    <div class="item">
+      <div class="what"><div class="name">{{ name }}</div></div>
+      <form method="post" action="/epicerie/stock/retirer">
+        <input type="hidden" name="nom" value="{{ name }}">
+        <button class="remove" aria-label="Retirer {{ name }}">×</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Aucun produit pour l'instant.</p>
+  {% endif %}
+</section>
+{% endblock %}
