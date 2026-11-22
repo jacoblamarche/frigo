@@ -25,6 +25,12 @@ class ParsedItem:
 
 
 @dataclass
+class Added:
+    id: int
+    merged: bool
+
+
+@dataclass
 class Item:
     id: int
     name: str
@@ -111,9 +117,9 @@ def _open_item(con: sqlite3.Connection, name_key: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def add_items(con: sqlite3.Connection, items: list[ParsedItem], added_by: str) -> list[int]:
+def add_items(con: sqlite3.Connection, items: list[ParsedItem], added_by: str) -> list[Added]:
     """Ajoute les articles ; un article déjà à acheter cumule quantité et étiquettes."""
-    ids = []
+    added = []
     with con:
         for item in items:
             key = normalize(item.name)
@@ -138,10 +144,10 @@ def add_items(con: sqlite3.Connection, items: list[ParsedItem], added_by: str) -
                 " last_added_at = excluded.last_added_at",
                 (key, item.name, now()),
             )
-            ids.append(item_id)
+            added.append(Added(item_id, merged=existing is not None))
         if items:
             bump_version(con)
-    return ids
+    return added
 
 
 def toggle(con: sqlite3.Connection, item_id: int) -> bool:
@@ -190,19 +196,16 @@ def clear_checked(con: sqlite3.Connection) -> int:
     return deleted
 
 
-def list_items(con: sqlite3.Connection, tag: str = "", checked: bool = False) -> list[Item]:
-    """`tag` filtre par étiquette ; « - » ne garde que les articles sans étiquette."""
+def _items(con: sqlite3.Connection, where: str, params: tuple, order: str) -> list[Item]:
     rows = con.execute(
         "SELECT i.*, group_concat(t.name, char(31)) AS tag_names"
         " FROM grocery_items i"
         " LEFT JOIN grocery_item_tags it ON it.item_id = i.id"
         " LEFT JOIN tags t ON t.id = it.tag_id"
-        " WHERE i.checked = ?"
-        " GROUP BY i.id"
-        + (" ORDER BY i.checked_at DESC, i.id DESC" if checked else " ORDER BY i.created_at, i.id"),
-        (int(checked),),
+        f" WHERE {where} GROUP BY i.id ORDER BY {order}",
+        params,
     ).fetchall()
-    items = [
+    return [
         Item(
             id=row["id"],
             name=row["name"],
@@ -213,11 +216,72 @@ def list_items(con: sqlite3.Connection, tag: str = "", checked: bool = False) ->
         )
         for row in rows
     ]
+
+
+def list_items(con: sqlite3.Connection, tag: str = "", checked: bool = False) -> list[Item]:
+    """`tag` filtre par étiquette ; « - » ne garde que les articles sans étiquette."""
+    order = "i.checked_at DESC, i.id DESC" if checked else "i.created_at, i.id"
+    items = _items(con, "i.checked = ?", (int(checked),), order)
     if tag == "-":
         return [item for item in items if not item.tags]
     if tag:
         return [item for item in items if normalize(tag) in map(normalize, item.tags)]
     return items
+
+
+def get_item(con: sqlite3.Connection, item_id: int) -> Item | None:
+    found = _items(con, "i.id = ?", (item_id,), "i.id")
+    return found[0] if found else None
+
+
+def update_item(
+    con: sqlite3.Connection,
+    item_id: int,
+    name: str | None = None,
+    quantity: str | None = None,
+    tags: list[str] | None = None,
+) -> Item:
+    """Change ce qui est fourni. `tags` remplace toutes les étiquettes."""
+    with con:
+        row = con.execute("SELECT * FROM grocery_items WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            raise LookupError(f"Aucun article {item_id}.")
+        if name is not None and name.strip():
+            key = normalize(name)
+            clash = _open_item(con, key)
+            if not row["checked"] and clash and clash["id"] != item_id:
+                raise ValueError(
+                    f"« {clash['name']} » est déjà sur la liste (article {clash['id']})."
+                )
+            con.execute(
+                "UPDATE grocery_items SET name = ?, name_key = ? WHERE id = ?",
+                (display(name), key, item_id),
+            )
+        if quantity is not None:
+            con.execute(
+                "UPDATE grocery_items SET quantity = ? WHERE id = ?", (quantity.strip(), item_id)
+            )
+        if tags is not None:
+            con.execute("DELETE FROM grocery_item_tags WHERE item_id = ?", (item_id,))
+            _add_tags(con, item_id, [display(t) for t in tags if t.strip()])
+        bump_version(con)
+    return get_item(con, item_id)
+
+
+def mark_bought(con: sqlite3.Connection, item_ids: list[int]) -> list[int]:
+    """Coche les articles encore à acheter et renvoie ceux qui l'ont été."""
+    with con:
+        done = [
+            item_id
+            for item_id in item_ids
+            if con.execute(
+                "UPDATE grocery_items SET checked = 1, checked_at = ? WHERE id = ? AND checked = 0",
+                (now(), item_id),
+            ).rowcount
+        ]
+        if done:
+            bump_version(con)
+    return done
 
 
 def tag_counts(con: sqlite3.Connection) -> list[tuple[str, int]]:

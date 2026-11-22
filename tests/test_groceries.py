@@ -1,10 +1,12 @@
+import pytest
+
 from app import groceries
 from app.db import data_version
 from app.groceries import ParsedItem
 
 
 def add(con, *items, who="Jacob"):
-    return groceries.add_items(con, list(items), who)
+    return [added.id for added in groceries.add_items(con, list(items), who)]
 
 
 def names(items):
@@ -38,6 +40,40 @@ def test_unchecking_merges_into_the_line_already_back_on_the_list(con):
 
     assert names(groceries.list_items(con)) == [("Lait", "1 L + 2 L", ["Crêpes"])]
     assert groceries.list_items(con, checked=True) == []
+
+
+def test_add_reports_which_items_were_merged(con):
+    added = groceries.add_items(
+        con, [ParsedItem("Oignons", "2"), ParsedItem("Lait"), ParsedItem("oignons", "1")], "Jacob"
+    )
+    assert [a.merged for a in added] == [False, False, True]
+    assert added[0].id == added[2].id
+
+
+def test_update_changes_only_what_is_given(con):
+    [item_id] = add(con, ParsedItem("Oignons", "2", ["Lasagne"]))
+
+    item = groceries.update_item(con, item_id, quantity="3", tags=["soupe", " "])
+
+    assert (item.name, item.quantity, item.tags) == ("Oignons", "3", ["Soupe"])
+    assert groceries.update_item(con, item_id, name="oignons rouges").name == "Oignons rouges"
+
+
+def test_update_refuses_a_name_already_on_the_list(con):
+    oignons, _ = add(con, ParsedItem("Oignons"), ParsedItem("Échalotes"))
+
+    with pytest.raises(ValueError, match="Échalotes"):
+        groceries.update_item(con, oignons, name="echalotes")
+    with pytest.raises(LookupError):
+        groceries.update_item(con, 999, quantity="1")
+
+
+def test_mark_bought_skips_unknown_and_already_bought(con):
+    lait, oeufs = add(con, ParsedItem("Lait"), ParsedItem("Œufs"))
+    groceries.toggle(con, oeufs)
+
+    assert groceries.mark_bought(con, [lait, oeufs, 999]) == [lait]
+    assert groceries.list_items(con) == []
 
 
 def test_toggle_and_remove_report_unknown_items(con):

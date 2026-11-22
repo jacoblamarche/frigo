@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -7,13 +7,16 @@ from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from mcp.server.transport_security import TransportSecuritySettings
 
 from app import groceries
 from app.db import connect, data_version, migrate
-from app.settings import Settings, same_origin
+from app.mcp_server import AUTHOR, build_mcp
+from app.settings import Settings, bearer_ok, same_origin
 
 APP_DIR = Path(__file__).parent
 PUBLIC_PATHS = ("/healthz", "/static/")
+MCP_PATH = "/mcp"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 SECTIONS = [{"id": "epicerie", "label": "Épicerie", "path": "/epicerie"}]
 
@@ -25,13 +28,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     with closing(connect(db_path)) as con:
         migrate(con)
 
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    mcp = build_mcp(db_path)
+    # Sans état et en JSON : chaque appel d'outil est une requête indépendante. La protection
+    # contre le DNS rebinding n'accepterait que localhost ; le jeton protège déjà /mcp.
+    mcp_routes = mcp.streamable_http_app(
+        streamable_http_path=MCP_PATH,
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    ).routes
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        async with mcp.session_manager.run():
+            yield
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
+    if settings.mcp_token:
+        app.router.routes.extend(mcp_routes)
     templates = Jinja2Templates(directory=APP_DIR / "templates")
+    templates.env.globals["mcp_author"] = AUTHOR
 
     @app.middleware("http")
     async def identify(request: Request, call_next):
         if request.url.path.startswith(PUBLIC_PATHS):
+            return await call_next(request)
+        if request.url.path == MCP_PATH:
+            if not bearer_ok(request.headers, settings.mcp_token):
+                return PlainTextResponse(
+                    "Jeton invalide.", status_code=401, headers={"WWW-Authenticate": "Bearer"}
+                )
             return await call_next(request)
         client_host = request.client.host if request.client else ""
         person = settings.person_for(client_host, request.headers)

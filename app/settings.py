@@ -1,3 +1,4 @@
+import hmac
 import json
 import os
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ class Settings:
     trusted_proxies: frozenset[str] = frozenset()
     # Développement local, sans oauth2-proxy devant : tout le monde est cette personne.
     dev_user: str = ""
+    # Jeton attendu sur /mcp. Vide : le serveur MCP est désactivé.
+    mcp_token: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -28,6 +31,7 @@ class Settings:
                 ip.strip() for ip in os.environ.get("FRIGO_TRUSTED_PROXIES", "").split(",") if ip
             ),
             dev_user=os.environ.get("FRIGO_DEV_USER", ""),
+            mcp_token=os.environ.get("FRIGO_MCP_TOKEN", ""),
         )
 
     def person_for(self, client_host: str, headers: Headers) -> str | None:
@@ -36,6 +40,11 @@ class Settings:
         if client_host not in self.trusted_proxies:
             return None
         return self.people.get(headers.get("x-email", "").strip().lower())
+
+
+def bearer_ok(headers: Headers, token: str) -> bool:
+    supplied = headers.get("authorization", "").removeprefix("Bearer ").strip()
+    return bool(token) and hmac.compare_digest(supplied.encode(), token.encode())
 
 
 def same_origin(headers: Headers) -> bool:
