@@ -1,18 +1,21 @@
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from app import groceries, recipes
+from app import groceries, recipes, tasks
 from app.db import connect
 
 AUTHOR = "Claude"
 
 INSTRUCTIONS = """\
-frigo tient la liste d'épicerie de Jacob et Catherine.
+frigo tient la liste d'épicerie et les tâches de la maison de Jacob et Catherine.
 
+Épicerie :
 - Pour une recette, ajouter tous les ingrédients en un seul appel à add_groceries, avec le nom
   de la recette dans `tag`.
 - Dans ce même appel, joindre `recipe` : frigo en garde une fiche, consultable dans l'app. Y
@@ -33,7 +36,21 @@ frigo tient la liste d'épicerie de Jacob et Catherine.
 - Pour déplacer un article quand on le demande, update_grocery avec `aisle` : le choix est
   retenu pour la prochaine fois.
 - Les identifiants à passer aux autres outils viennent de list_groceries.
+
+Tâches (un tableau À faire, En cours, Fait) :
+- Avant d'ajouter, consulter list_tasks : si la tâche y est déjà, la modifier plutôt que d'en
+  créer une deuxième.
+- Ne confier une tâche à quelqu'un que si l'utilisateur le dit, avec un prénom de `people`.
+  Le jeton est partagé : on ne sait pas qui parle, alors « pour moi » demande de préciser le
+  prénom.
+- Une échéance relative (« vendredi », « dans deux semaines ») se calcule à partir de `today`
+  de list_tasks. Priorité `normal`, sauf si c'est urgent ou demandé.
+- Pour avancer, ramener ou réassigner une tâche, update_task.
+- Les identifiants à passer aux autres outils viennent de list_tasks.
 """
+
+Status = Literal["todo", "doing", "done"]
+Priority = Literal["low", "normal", "high"]
 
 
 class Grocery(BaseModel):
@@ -90,6 +107,47 @@ class IdsResult(BaseModel):
     skipped: list[int] = Field(description="Introuvables, ou déjà dans l'état demandé")
 
 
+class TaskOut(BaseModel):
+    id: int
+    title: str
+    note: str
+    status: Status
+    priority: Priority
+    assignee: str = Field(description="Prénom, vide si la tâche n'est à personne")
+    due: str = Field(description="Échéance AAAA-MM-JJ, vide s'il n'y en a pas")
+    done_on: str = Field(description="Date de fin AAAA-MM-JJ, pour les tâches faites")
+    added_by: str
+
+
+class TaskList(BaseModel):
+    tasks: list[TaskOut]
+    today: str = Field(description="Date du jour AAAA-MM-JJ, pour calculer une échéance")
+    people: list[str] = Field(description="Prénoms à qui on peut confier une tâche")
+
+
+class NewTask(BaseModel):
+    title: str = Field(description="Ex. « Appeler le plombier »")
+    note: str = ""
+    status: Status = "todo"
+    priority: Priority = "normal"
+    assignee: str = Field("", description="Prénom parmi `people` de list_tasks ; vide : personne")
+    due: str = Field("", description="Échéance AAAA-MM-JJ ; vide : aucune")
+
+
+def _task_out(task: tasks.Task) -> TaskOut:
+    return TaskOut(
+        id=task.id,
+        title=task.title,
+        note=task.note,
+        status=task.status,
+        priority=tasks.PRIORITIES[task.priority],
+        assignee=task.assignee,
+        due=task.due.isoformat() if task.due else "",
+        done_on=task.done_on.isoformat() if task.done_on and task.status == "done" else "",
+        added_by=task.added_by,
+    )
+
+
 def _out(item: groceries.Item) -> Grocery:
     return Grocery(
         id=item.id,
@@ -102,7 +160,8 @@ def _out(item: groceries.Item) -> Grocery:
     )
 
 
-def build_mcp(db_path: Path) -> MCPServer:
+def build_mcp(db_path: Path, people: list[str]) -> MCPServer:
+    """`people` : les prénoms à qui on peut confier une tâche."""
     mcp = MCPServer(name="frigo", instructions=INSTRUCTIONS)
 
     def db():
@@ -225,5 +284,93 @@ def build_mcp(db_path: Path) -> MCPServer:
         """Retire tous les articles cochés. Renvoie combien ont été retirés."""
         with db() as con:
             return groceries.clear_checked(con)
+
+    @mcp.tool()
+    def list_tasks(
+        status: Status | None = None, assignee: str = "", include_done: bool = False
+    ) -> TaskList:
+        """Liste les tâches à faire et en cours ; les faites seulement avec `include_done` ou
+        `status` « done », et seulement celles des 14 derniers jours.
+
+        `assignee` filtre par prénom ; « - » ne garde que les tâches qui ne sont à personne.
+        """
+        try:
+            person = None
+            if assignee == "-":
+                person = ""
+            elif assignee.strip():
+                person = tasks.find_person(assignee, people)
+        except ValueError as error:
+            raise ToolError(str(error)) from error
+        with db() as con:
+            found = tasks.list_tasks(con, status, person)
+        if not (include_done or status == "done"):
+            found = [t for t in found if t.status != "done"]
+        return TaskList(
+            tasks=[_task_out(t) for t in found], today=tasks.today().isoformat(), people=people
+        )
+
+    @mcp.tool()
+    def add_tasks(items: list[NewTask]) -> list[TaskOut]:
+        """Ajoute des tâches. Si l'une est invalide, aucune n'est ajoutée."""
+        with db() as con:
+            try:
+                ids = tasks.add(
+                    con,
+                    [
+                        tasks.Fields(
+                            title=t.title,
+                            note=t.note,
+                            status=t.status,
+                            priority=tasks.PRIORITIES.index(t.priority),
+                            assignee=t.assignee,
+                            due=tasks.parse_due(t.due),
+                        )
+                        for t in items
+                    ],
+                    AUTHOR,
+                    people,
+                )
+            except ValueError as error:
+                raise ToolError(str(error)) from error
+            return [_task_out(tasks.get(con, i)) for i in ids]
+
+    @mcp.tool()
+    def update_task(
+        id: int,
+        title: str | None = None,
+        note: str | None = None,
+        status: Status | None = None,
+        priority: Priority | None = None,
+        assignee: str | None = None,
+        due: str | None = None,
+    ) -> TaskOut:
+        """Modifie une tâche. Seuls les champs fournis changent ; `assignee` ou `due` vide
+        retire la personne ou l'échéance."""
+        changes = {
+            "title": title,
+            "note": note,
+            "status": status,
+            "priority": tasks.PRIORITIES.index(priority) if priority else None,
+            "assignee": assignee,
+        }
+        with db() as con:
+            task = tasks.get(con, id)
+            if task is None:
+                raise ToolError(f"Aucune tâche {id}.")
+            try:
+                fields = replace(task, **{k: v for k, v in changes.items() if v is not None})
+                if due is not None:
+                    fields.due = tasks.parse_due(due)
+                return _task_out(tasks.update(con, id, fields, people))
+            except (LookupError, ValueError) as error:
+                raise ToolError(str(error)) from error
+
+    @mcp.tool()
+    def remove_tasks(ids: list[int]) -> IdsResult:
+        """Supprime des tâches, faites ou non."""
+        with db() as con:
+            done = [i for i in ids if tasks.remove(con, i)]
+        return IdsResult(done=done, skipped=[i for i in ids if i not in done])
 
     return mcp

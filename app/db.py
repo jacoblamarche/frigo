@@ -91,6 +91,23 @@ MIGRATIONS = [
         updated_at TEXT NOT NULL
     );
     """,
+    # priority : 0 basse, 1 normale, 2 haute, pour trier en SQL. assignee : un prénom de
+    # FRIGO_PEOPLE, vide pour personne. due : date locale AAAA-MM-JJ.
+    """
+    CREATE TABLE tasks (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
+        priority INTEGER NOT NULL DEFAULT 1 CHECK (priority IN (0, 1, 2)),
+        assignee TEXT NOT NULL DEFAULT '',
+        due TEXT,
+        done_at TEXT,
+        added_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    """,
 ]
 
 

@@ -34,6 +34,14 @@ class Settings:
             mcp_token=os.environ.get("FRIGO_MCP_TOKEN", ""),
         )
 
+    @property
+    def names(self) -> list[str]:
+        """Les prénoms à qui on peut confier une tâche."""
+        names = list(self.people.values())
+        if self.dev_user and self.dev_user not in names:
+            names.append(self.dev_user)
+        return names
+
     def person_for(self, client_host: str, headers: Headers) -> str | None:
         if self.dev_user:
             return self.dev_user

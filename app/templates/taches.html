@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Tâches · frigo{% endblock %}
+{% block heading %}Tâches{% endblock %}
+{% block content %}
+<section class="screen">
+  <div id="liste" data-src="/taches/liste?{{ query }}" data-etag='{{ etag }}'>
+    {% include "_taches_liste.html" %}
+  </div>
+  <a class="btn add-task" href="/taches/nouvelle?{{ query }}">+ Nouvelle tâche</a>
+</section>
+{% endblock %}
