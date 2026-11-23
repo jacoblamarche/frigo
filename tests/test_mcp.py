@@ -4,17 +4,18 @@ from contextlib import closing
 import pytest
 from fastapi.testclient import TestClient
 
-from app import groceries, recipes
+from app import groceries, recipes, tasks
 from app.db import connect
 from app.main import create_app
 from app.settings import Settings
+from tests.conftest import PEOPLE
 
 TOKEN = "jeton-de-test"
 
 
 @pytest.fixture
 def mcp(tmp_path):
-    settings = Settings(data_dir=tmp_path, mcp_token=TOKEN, dev_user="Jacob")
+    settings = Settings(data_dir=tmp_path, mcp_token=TOKEN, dev_user="Jacob", people=PEOPLE)
     with TestClient(create_app(settings)) as client:
         yield client
 
@@ -59,6 +60,10 @@ def test_tools_are_listed(mcp):
         "mark_bought",
         "remove_groceries",
         "clear_bought",
+        "list_tasks",
+        "add_tasks",
+        "update_task",
+        "remove_tasks",
     }
 
 
@@ -221,3 +226,96 @@ def test_a_bad_recipe_adds_nothing(mcp, arguments, message):
     assert result["isError"]
     assert message in json.dumps(result, ensure_ascii=False)
     assert call(mcp, "list_groceries")["to_buy"] == []
+
+
+def tool_error(client, tool, **arguments):
+    result = rpc(client, "tools/call", {"name": tool, "arguments": arguments}).json()["result"]
+    assert result["isError"]
+    return json.dumps(result, ensure_ascii=False)
+
+
+def test_claude_adds_tasks_to_nobody_by_default(mcp):
+    board = call(mcp, "list_tasks")
+    assert board["tasks"] == []
+    assert board["people"] == ["Jacob", "Catherine"]
+    assert board["today"] == tasks.today().isoformat()
+
+    added = call(
+        mcp,
+        "add_tasks",
+        items=[
+            {"title": "changer le filtre de la fournaise"},
+            {
+                "title": "Réserver le resto",
+                "assignee": "catherine",
+                "priority": "high",
+                "due": "2026-12-05",
+                "note": "Fête de maman",
+            },
+        ],
+    )
+    assert [(t["title"], t["assignee"], t["priority"], t["due"], t["added_by"]) for t in added] == [
+        ("Changer le filtre de la fournaise", "", "normal", "", "Claude"),
+        ("Réserver le resto", "Catherine", "high", "2026-12-05", "Claude"),
+    ]
+    assert [t["title"] for t in call(mcp, "list_tasks")["tasks"]] == [
+        "Réserver le resto",
+        "Changer le filtre de la fournaise",
+    ]
+    assert [t["title"] for t in call(mcp, "list_tasks", assignee="-")["tasks"]] == [
+        "Changer le filtre de la fournaise"
+    ]
+    assert [t["title"] for t in call(mcp, "list_tasks", assignee="CATHERINE")["tasks"]] == [
+        "Réserver le resto"
+    ]
+    assert "Personne inconnue" in tool_error(mcp, "list_tasks", assignee="Paul")
+    page = mcp.get("/taches").text
+    assert "Ajoutée par Claude" in page
+
+
+def test_a_bad_task_adds_nothing(mcp):
+    message = tool_error(
+        mcp, "add_tasks", items=[{"title": "Tondre"}, {"title": "Peindre", "assignee": "Paul"}]
+    )
+    assert "Personne inconnue : « Paul ». Choix : Jacob, Catherine." in message
+    assert "AAAA-MM-JJ" in tool_error(mcp, "add_tasks", items=[{"title": "x", "due": "vendredi"}])
+    assert call(mcp, "list_tasks")["tasks"] == []
+
+
+def test_update_task_changes_only_what_is_given(mcp):
+    [task] = call(
+        mcp,
+        "add_tasks",
+        items=[
+            {
+                "title": "Appeler le plombier",
+                "assignee": "Jacob",
+                "due": "2026-12-01",
+                "note": "418 555-0123",
+            }
+        ],
+    )
+    moved = call(mcp, "update_task", id=task["id"], status="doing", priority="low")
+    assert (moved["status"], moved["priority"], moved["assignee"], moved["due"], moved["note"]) == (
+        "doing",
+        "low",
+        "Jacob",
+        "2026-12-01",
+        "418 555-0123",
+    )
+
+    cleared = call(mcp, "update_task", id=task["id"], assignee="", due="", status="done")
+    assert (cleared["assignee"], cleared["due"]) == ("", "")
+    assert cleared["done_on"] == tasks.today().isoformat()
+    assert call(mcp, "list_tasks")["tasks"] == []
+    assert len(call(mcp, "list_tasks", include_done=True)["tasks"]) == 1
+    assert len(call(mcp, "list_tasks", status="done")["tasks"]) == 1
+
+    assert "Aucune tâche 999" in tool_error(mcp, "update_task", id=999, status="done")
+    assert "Personne inconnue" in tool_error(mcp, "update_task", id=task["id"], assignee="Paul")
+
+
+def test_remove_tasks(mcp):
+    [task] = call(mcp, "add_tasks", items=[{"title": "Tondre"}])
+    removed = call(mcp, "remove_tasks", ids=[task["id"], 999])
+    assert removed == {"done": [task["id"]], "skipped": [999]}

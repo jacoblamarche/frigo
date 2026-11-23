@@ -1,9 +1,10 @@
 import re
 from contextlib import closing
+from datetime import date
 
 from fastapi.testclient import TestClient
 
-from app import groceries, recipes
+from app import groceries, recipes, tasks
 from app.db import connect
 from app.main import create_app
 from app.settings import Settings
@@ -270,3 +271,136 @@ def test_deleting_a_recipe_keeps_the_groceries(client, settings):
     assert response.headers["location"] == "/recettes"
     assert "Aucune recette" in client.get("/recettes").text
     assert "Oignons" in client.get("/epicerie?etiquette=Lasagne").text
+
+
+def task_ids(settings):
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        return {t.title: t.id for t in tasks.list_tasks(con)}
+
+
+def new_task(client, titre, **fields):
+    return client.post("/taches/ajouter", data={"titre": titre, **fields}, follow_redirects=False)
+
+
+def test_tasks_tab_starts_empty(client):
+    page = client.get("/taches").text
+    assert 'href="/taches" class="on"' in page
+    assert "Rien à faire." in page
+    assert 'href="/taches/nouvelle?colonne=a-faire&amp;pour="' in page
+
+
+def test_a_new_task_defaults_to_me_and_the_current_column(client):
+    sheet = client.get("/taches/nouvelle?colonne=en-cours").text
+    assert 'value="Jacob" checked' in sheet
+    assert '<option value="en-cours" selected>' in sheet
+    assert 'value="1" checked' in sheet
+
+
+def test_adding_a_task_goes_to_its_column(client, settings):
+    response = new_task(
+        client,
+        "appeler le plombier",
+        priorite="2",
+        personne="Catherine",
+        etat="en-cours",
+        echeance="2026-12-05",
+        note="Fuite sous l'évier",
+        pour="moi",
+    )
+    assert response.headers["location"] == "/taches?colonne=en-cours&pour=moi"
+
+    page = client.get("/taches?colonne=en-cours").text
+    assert "Appeler le plombier" in page
+    assert '<span class="pill p-haute">Haute</span>' in page
+    assert 'class="who who-1" title="Catherine">C<' in page
+    assert "sam. 5 déc." in page
+    assert "Fuite" not in page
+    assert "Fait →" in page
+
+    sheet = client.get(f"/taches/{task_ids(settings)['Appeler le plombier']}").text
+    assert "Fuite sous l&#39;évier</textarea>" in sheet
+    assert 'value="2026-12-05"' in sheet
+    assert "Ajoutée par Jacob" in sheet
+
+
+def test_the_sheet_shows_errors_without_losing_the_draft(client):
+    response = new_task(client, "Tondre", personne="Paul", note="Avant la pluie")
+    assert response.status_code == 422
+    assert "Personne inconnue" in response.text
+    assert 'value="Tondre"' in response.text and "Avant la pluie</textarea>" in response.text
+
+
+def test_column_counts_and_the_person_filter(client, settings):
+    new_task(client, "Pour moi", personne="Jacob")
+    new_task(client, "Pour Catherine", personne="Catherine")
+    new_task(client, "Pour personne", etat="en-cours")
+
+    page = client.get("/taches").text
+    assert re.search(r'À faire <span class="n">2</span>', page)
+    assert re.search(r'En cours <span class="n">1</span>', page)
+    chips = re.findall(r'<a class="chip[^"]*"[^>]*>([^<]+)<', page)
+    assert chips == ["Tout le monde", "Moi", "Catherine", "Personne"]
+
+    mine = client.get("/taches?pour=moi").text
+    assert "Pour moi" in mine and "Pour Catherine" not in mine
+    assert re.search(r'En cours <span class="n">0</span>', mine)
+    assert "Pour Catherine" in client.get("/taches?pour=catherine").text
+    nobody = client.get("/taches?colonne=en-cours&pour=personne").text
+    assert "Pour personne" in nobody
+
+    catherine = client.get("/taches", headers={"X-Email": "catherine@example.com"}).text
+    chips = re.findall(r'<a class="chip[^"]*"[^>]*>([^<]+)<', catherine)
+    assert chips == ["Tout le monde", "Moi", "Jacob", "Personne"]
+
+
+def test_the_card_button_advances_once(client, settings):
+    new_task(client, "Peindre la music room")
+    task_id = task_ids(settings)["Peindre la music room"]
+    for _ in range(2):
+        response = client.post(
+            f"/taches/{task_id}/avancer", data={"de": "todo"}, headers={"X-Frigo-Async": "1"}
+        )
+        assert response.status_code == 204
+    assert "Peindre la music room" in client.get("/taches?colonne=en-cours").text
+
+    client.post(f"/taches/{task_id}/avancer", data={"de": "doing"})
+    done = client.get("/taches?colonne=fait").text
+    assert "Fait aujourd&#39;hui" in done and "→</button>" not in done
+
+
+def test_editing_moves_back_and_returns_to_the_same_view(client, settings):
+    new_task(client, "Payer Hydro", etat="fait")
+    task_id = task_ids(settings)["Payer Hydro"]
+    response = client.post(
+        f"/taches/{task_id}/modifier",
+        data={"titre": "Payer Hydro", "etat": "a-faire", "colonne": "fait", "pour": "personne"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == "/taches?colonne=fait&pour=personne"
+    assert "Payer Hydro" in client.get("/taches").text
+
+
+def test_overdue_tasks_are_flagged(client, settings):
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        tasks.add(con, [tasks.Fields("Appeler", due=date(2020, 1, 6))], "Jacob", ["Jacob"])
+    assert '<span class="late">lun. 6 janv. 2020 · en retard</span>' in client.get("/taches").text
+
+
+def test_deleting_a_task(client, settings):
+    new_task(client, "Trier le garde-robe")
+    task_id = task_ids(settings)["Trier le garde-robe"]
+    assert "data-confirm=" in client.get(f"/taches/{task_id}").text
+    response = client.post(
+        f"/taches/{task_id}/supprimer", data={"colonne": "a-faire"}, follow_redirects=False
+    )
+    assert response.headers["location"] == "/taches?colonne=a-faire"
+    assert "Rien à faire." in client.get("/taches").text
+    assert client.get(f"/taches/{task_id}", follow_redirects=False).status_code == 303
+
+
+def test_the_task_fragment_answers_304_until_something_changes(client):
+    etag = client.get("/taches/liste").headers["etag"]
+    assert client.get("/taches/liste", headers={"If-None-Match": etag}).status_code == 304
+    new_task(client, "Tondre")
+    changed = client.get("/taches/liste", headers={"If-None-Match": etag})
+    assert changed.status_code == 200 and "Tondre" in changed.text

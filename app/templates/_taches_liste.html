@@ -1,0 +1,45 @@
+<nav class="seg" aria-label="Colonnes">
+  {% for c in columns %}
+  <a class="{{ 'on' if c == column }}" href="/taches?{{ {'colonne': c.slug, 'pour': pour}|urlencode }}">{{ c.label }} <span class="n">{{ board[c.status]|length }}</span></a>
+  {% endfor %}
+</nav>
+<div class="chips">
+  {% for value, label in filters %}
+  <a class="chip {{ 'on' if value == pour }}" href="/taches?{{ {'colonne': column.slug, 'pour': value}|urlencode }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% set shown = board[column.status] %}
+{% if shown %}
+<div class="cards">
+  {% for t in shown %}
+  <div class="card {{ 'done' if t.status == 'done' }}">
+    <div class="top">
+      <a class="title" href="/taches/{{ t.id }}?{{ query }}">{{ t.title }}</a>
+      <span class="pill p-{{ t.priority_label|lower }}">{{ t.priority_label }}</span>
+    </div>
+    <div class="meta">
+      <span class="who {{ colors.get(t.assignee, '') }}" title="{{ t.assignee or 'Personne' }}">{{ t.assignee[:1] or '?' }}</span>
+      {% if t.status == 'done' %}
+      {% if t.done_on %}<span>Fait {{ t.done_on|day }}</span>{% endif %}
+      {% elif t.due %}
+      <span class="{{ 'late' if t.late }}">{{ t.due|day }}{% if t.late %} · en retard{% endif %}</span>
+      {% else %}
+      <span>Pas d'échéance</span>
+      {% endif %}
+      {% if t.added_by == mcp_author %}<span class="by" title="Ajoutée par {{ mcp_author }}">{{ mcp_author }}</span>{% endif %}
+      {% if t.next_column %}
+      <form class="move" method="post" action="/taches/{{ t.id }}/avancer" data-async>
+        <input type="hidden" name="de" value="{{ t.status }}">
+        <input type="hidden" name="colonne" value="{{ column.slug }}">
+        <input type="hidden" name="pour" value="{{ pour }}">
+        <button aria-label="Passer « {{ t.title }} » à {{ t.next_column.label }}">{{ t.next_column.label }} →</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">{{ column.empty }}</p>
+{% endif %}

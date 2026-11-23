@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ task.title if task else 'Nouvelle tâche' }} · frigo{% endblock %}
+{% block heading %}{{ 'Tâche' if task else 'Nouvelle tâche' }}{% endblock %}
+{% block content %}
+<section class="screen">
+  <p class="hint"><a href="{{ back }}">← Tâches</a></p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form class="sheet rise" method="post" action="{{ '/taches/%d/modifier' % task.id if task else '/taches/ajouter' }}">
+    <label>Titre <input name="titre" value="{{ draft.title }}" required autocomplete="off" {{ 'autofocus' if not task }}></label>
+    <fieldset>
+      <legend>Priorité</legend>
+      <div class="opts">
+        {% for label in priorities %}
+        <label><input type="radio" name="priorite" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 == draft.priority }}><span>{{ label }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Pour</legend>
+      <div class="opts">
+        {% for name in names %}
+        <label><input type="radio" name="personne" value="{{ name }}" {{ 'checked' if name == draft.assignee }}><span>{{ name }}</span></label>
+        {% endfor %}
+        <label><input type="radio" name="personne" value="" {{ 'checked' if not draft.assignee }}><span>Personne</span></label>
+      </div>
+    </fieldset>
+    <div class="two">
+      <label>Colonne
+        <select name="etat">
+          {% for c in columns %}
+          <option value="{{ c.slug }}" {{ 'selected' if c.status == draft.status }}>{{ c.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Échéance <input type="date" name="echeance" value="{{ draft.due or '' }}"></label>
+    </div>
+    <label>Note <textarea name="note" rows="4">{{ draft.note }}</textarea></label>
+    {% if task %}<p class="hint">Ajoutée par {{ task.added_by }}</p>{% endif %}
+    <input type="hidden" name="colonne" value="{{ colonne }}">
+    <input type="hidden" name="pour" value="{{ pour }}">
+    <button class="btn">Enregistrer</button>
+  </form>
+  {% if task %}
+  <form method="post" action="/taches/{{ task.id }}/supprimer" data-confirm="Supprimer la tâche « {{ task.title }} » ?">
+    <input type="hidden" name="colonne" value="{{ colonne }}">
+    <input type="hidden" name="pour" value="{{ pour }}">
+    <button class="btn ghost delete">Supprimer la tâche</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

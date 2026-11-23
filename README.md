@@ -4,7 +4,8 @@ La porte du frigo, version web : la liste d'épicerie, les tâches de la maison 
 achats à planifier, pour deux personnes. Claude peut y ajouter des choses par un serveur MCP
 intégré.
 
-Pour l'instant : la liste d'épicerie et son serveur MCP. Les tâches et les gros achats suivent.
+Pour l'instant : l'épicerie, les recettes importées par Claude et les tâches. Les gros achats
+suivent.
 
 ## Épicerie
 
@@ -26,6 +27,19 @@ Pour l'instant : la liste d'épicerie et son serveur MCP. Les tâches et les gro
   ne les ajoute jamais, même pour une recette, sauf si on lui dit qu'il en manque. On peut
   toujours les ajouter soi-même.
 
+## Tâches
+
+- Un tableau à trois colonnes, À faire, En cours et Fait, affichées en onglets. Fait ne montre
+  que les tâches finies dans les 14 derniers jours.
+- Une tâche a un titre, une priorité (Basse, Normale, Haute), une personne (ou personne), une
+  échéance et une note facultatives. Dans chaque colonne, elle se classe par priorité, puis
+  par échéance. Une échéance dépassée est en rouge.
+- Un filtre : Tout le monde, Moi, l'autre personne, Personne.
+- « En cours → » ou « Fait → » sur la carte fait avancer la tâche. Toucher la carte ouvre sa
+  fiche, où l'on peut tout changer, y compris la ramener dans une colonne précédente, ou la
+  supprimer.
+- Les jours affichés suivent l'heure de l'Est (`America/Toronto`).
+
 ## Serveur MCP
 
 Sur `/mcp` (HTTP streamable, sans état), protégé par le jeton `FRIGO_MCP_TOKEN`. Sans jeton
@@ -38,8 +52,12 @@ directement.
 | `add_groceries` | ajoute des articles, avec une étiquette commune (ex. la recette) et un rayon par article ; même fusion que l'interface. Laisse de côté les produits toujours en stock, sauf `include_staples` |
 | `update_grocery` | change le nom, la quantité, les étiquettes ou le rayon d'un article |
 | `mark_bought`, `remove_groceries`, `clear_bought` | cocher, retirer, vider les achetés |
+| `list_tasks` | les tâches à faire et en cours (les faites sur demande), filtrables par colonne et par personne, plus la date du jour et les prénoms possibles |
+| `add_tasks` | ajoute des tâches ; si l'une est invalide, aucune n'est ajoutée |
+| `update_task` | change n'importe quel champ d'une tâche, dont sa colonne |
+| `remove_tasks` | supprime des tâches |
 
-Les articles ajoutés par le MCP portent une pastille « Claude » dans la liste. Les consignes
+Les articles et les tâches ajoutés par le MCP portent une pastille « Claude ». Les consignes
 données à Claude (une recette = un appel, réutiliser le nom d'un article équivalent) sont dans
 `app/mcp_server.py`.
 
@@ -65,7 +83,7 @@ docker build -t frigo . && docker run --rm -p 8000:8000 -e FRIGO_DEV_USER=Jacob 
 
 | Variable | Rôle |
 |---|---|
-| `FRIGO_PEOPLE` | JSON courriel → prénom : `{"jacob@example.com": "Jacob"}` |
+| `FRIGO_PEOPLE` | JSON courriel → prénom : `{"jacob@example.com": "Jacob"}`. Les prénoms sont aussi ceux à qui on peut confier une tâche |
 | `FRIGO_TRUSTED_PROXIES` | IP autorisées à transmettre `X-Email`, séparées par des virgules (nginx) |
 | `FRIGO_DEV_USER` | Développement seulement : saute l'identification, tout le monde est cette personne |
 | `FRIGO_MCP_TOKEN` | Jeton du serveur MCP (`openssl rand -hex 32`). Vide : MCP désactivé |

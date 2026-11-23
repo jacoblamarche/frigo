@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app import groceries, recipes
+from app import groceries, recipes, tasks
 from app.db import connect, data_version, migrate
 from app.mcp_server import AUTHOR, build_mcp
 from app.settings import Settings, bearer_ok, same_origin
@@ -24,6 +24,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 SECTIONS = [
     {"id": "epicerie", "label": "Épicerie", "path": "/epicerie"},
     {"id": "recettes", "label": "Recettes", "path": "/recettes"},
+    {"id": "taches", "label": "Tâches", "path": "/taches"},
 ]
 
 
@@ -42,7 +43,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     with closing(connect(db_path)) as con:
         migrate(con)
 
-    mcp = build_mcp(db_path)
+    names = settings.names
+    mcp = build_mcp(db_path, names)
     # Sans état et en JSON : chaque appel d'outil est une requête indépendante. La protection
     # contre le DNS rebinding n'accepterait que localhost ; le jeton protège déjà /mcp.
     mcp_routes = mcp.streamable_http_app(
@@ -64,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=APP_DIR / "templates")
     templates.env.globals["mcp_author"] = AUTHOR
     templates.env.globals["static"] = static_url
+    templates.env.filters["day"] = tasks.day_label
 
     @app.middleware("http")
     async def identify(request: Request, call_next):
@@ -96,6 +99,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=status_code,
         )
 
+    def unless_unchanged(request: Request, etag: str, build) -> Response:
+        """304 tant que rien n'a changé depuis `etag`, sinon le fragment rendu par `build`."""
+        headers = {"ETag": etag, "Cache-Control": "no-store"}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        response = build()
+        response.headers.update(headers)
+        return response
+
+    def back(request: Request, url: str) -> Response:
+        if request.headers.get("x-frigo-async"):
+            return Response(status_code=204)
+        return RedirectResponse(url, status_code=303)
+
     def grocery_context(con, tag: str) -> dict:
         items = groceries.list_items(con, tag)
         return {
@@ -116,9 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return f"/epicerie?{urlencode({'etiquette': tag})}" if tag else "/epicerie"
 
     def back_to_groceries(request: Request, tag: str) -> Response:
-        if request.headers.get("x-frigo-async"):
-            return Response(status_code=204)
-        return RedirectResponse(groceries_url(tag), status_code=303)
+        return back(request, groceries_url(tag))
 
     def item_page(request: Request, con, item, tag: str, error: str = "") -> Response:
         return render(
@@ -150,13 +165,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/epicerie/liste")
     def groceries_fragment(request: Request, etiquette: str = "", con=Depends(get_db)):
-        etag = f'"{data_version(con)}"'
-        headers = {"ETag": etag, "Cache-Control": "no-store"}
-        if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers=headers)
-        response = render(request, "_epicerie_liste.html", grocery_context(con, etiquette))
-        response.headers.update(headers)
-        return response
+        return unless_unchanged(
+            request,
+            f'"{data_version(con)}"',
+            lambda: render(request, "_epicerie_liste.html", grocery_context(con, etiquette)),
+        )
 
     @app.post("/epicerie/ajouter")
     def add_groceries(
@@ -248,5 +261,182 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def recipe_delete(recipe_id: int, con=Depends(get_db)):
         recipes.delete(con, recipe_id)
         return RedirectResponse("/recettes", status_code=303)
+
+    def task_filter(request: Request, pour: str) -> tuple[str, str | None]:
+        """Le filtre « pour » tel que les puces le nomment, et la personne qu'il garde."""
+        me = request.state.person
+        if pour == "moi":
+            return "moi", me
+        if pour == "personne":
+            return "personne", ""
+        key = groceries.normalize(pour)
+        name = next((n for n in names if key and groceries.normalize(n) == key), None)
+        if name is None:
+            return "", None
+        return ("moi" if name == me else name), name
+
+    def tasks_url(colonne: str, pour: str) -> str:
+        query = urlencode({k: v for k, v in {"colonne": colonne, "pour": pour}.items() if v})
+        return f"/taches?{query}" if query else "/taches"
+
+    def tasks_etag(con) -> str:
+        # La date compte : « en retard » et la fenêtre de Fait changent à minuit.
+        return f'"{data_version(con)}-{tasks.today()}"'
+
+    def tasks_context(request: Request, con, colonne: str, pour: str) -> dict:
+        column = tasks.column_for(colonne)
+        pour, assignee = task_filter(request, pour)
+        me = request.state.person
+        return {
+            "section": "taches",
+            "column": column,
+            "columns": tasks.COLUMNS,
+            "board": tasks.board(con, assignee),
+            "pour": pour,
+            "filters": [
+                ("", "Tout le monde"),
+                ("moi", "Moi"),
+                *[(n, n) for n in names if n != me],
+                ("personne", "Personne"),
+            ],
+            "colors": {n: f"who-{i}" for i, n in enumerate(names)},
+            "query": urlencode({"colonne": column.slug, "pour": pour}),
+            "etag": tasks_etag(con),
+        }
+
+    def task_page(
+        request: Request,
+        draft: tasks.Fields,
+        colonne: str,
+        pour: str,
+        task: tasks.Task | None = None,
+        error: str = "",
+    ) -> Response:
+        return render(
+            request,
+            "tache.html",
+            {
+                "section": "taches",
+                "task": task,
+                "draft": draft,
+                "names": names,
+                "columns": tasks.COLUMNS,
+                "priorities": tasks.PRIORITY_LABELS,
+                "colonne": colonne,
+                "pour": pour,
+                "back": tasks_url(colonne, pour),
+                "error": error,
+            },
+            status_code=422 if error else 200,
+        )
+
+    def task_form(titre: str, priorite: int, personne: str, etat: str, note: str):
+        # L'échéance est lue à part : une date invalide doit pouvoir réafficher la fiche.
+        return tasks.Fields(
+            title=titre,
+            note=note,
+            status=tasks.column_for(etat).status,
+            priority=priorite,
+            assignee=personne,
+        )
+
+    @app.get("/taches")
+    def tasks_page(request: Request, colonne: str = "", pour: str = "", con=Depends(get_db)):
+        return render(request, "taches.html", tasks_context(request, con, colonne, pour))
+
+    @app.get("/taches/liste")
+    def tasks_fragment(request: Request, colonne: str = "", pour: str = "", con=Depends(get_db)):
+        return unless_unchanged(
+            request,
+            tasks_etag(con),
+            lambda: render(
+                request, "_taches_liste.html", tasks_context(request, con, colonne, pour)
+            ),
+        )
+
+    @app.get("/taches/nouvelle")
+    def new_task_page(request: Request, colonne: str = "", pour: str = ""):
+        me = request.state.person
+        draft = tasks.Fields(
+            title="",
+            status=tasks.column_for(colonne).status,
+            assignee=me if me in names else "",
+        )
+        return task_page(request, draft, colonne, pour)
+
+    @app.post("/taches/ajouter")
+    def add_task(
+        request: Request,
+        titre: str = Form(""),
+        priorite: int = Form(tasks.NORMAL),
+        personne: str = Form(""),
+        etat: str = Form(""),
+        echeance: str = Form(""),
+        note: str = Form(""),
+        colonne: str = Form(""),
+        pour: str = Form(""),
+        con=Depends(get_db),
+    ):
+        draft = task_form(titre, priorite, personne, etat, note)
+        try:
+            draft.due = tasks.parse_due(echeance)
+            tasks.add(con, [draft], request.state.person, names)
+        except ValueError as error:
+            return task_page(request, draft, colonne, pour, error=str(error))
+        # Vers la colonne de la nouvelle tâche, pour qu'on la voie.
+        return RedirectResponse(tasks_url(tasks.column_for(etat).slug, pour), status_code=303)
+
+    @app.get("/taches/{task_id:int}")
+    def task_sheet(
+        request: Request, task_id: int, colonne: str = "", pour: str = "", con=Depends(get_db)
+    ):
+        task = tasks.get(con, task_id)
+        if task is None:
+            return RedirectResponse(tasks_url(colonne, pour), status_code=303)
+        return task_page(request, task, colonne, pour, task)
+
+    @app.post("/taches/{task_id:int}/modifier")
+    def edit_task(
+        request: Request,
+        task_id: int,
+        titre: str = Form(""),
+        priorite: int = Form(tasks.NORMAL),
+        personne: str = Form(""),
+        etat: str = Form(""),
+        echeance: str = Form(""),
+        note: str = Form(""),
+        colonne: str = Form(""),
+        pour: str = Form(""),
+        con=Depends(get_db),
+    ):
+        task = tasks.get(con, task_id)
+        if task is None:
+            return RedirectResponse(tasks_url(colonne, pour), status_code=303)
+        draft = task_form(titre, priorite, personne, etat, note)
+        try:
+            draft.due = tasks.parse_due(echeance)
+            tasks.update(con, task_id, draft, names)
+        except ValueError as error:
+            return task_page(request, draft, colonne, pour, task, str(error))
+        return RedirectResponse(tasks_url(colonne, pour), status_code=303)
+
+    @app.post("/taches/{task_id:int}/avancer")
+    def advance_task(
+        request: Request,
+        task_id: int,
+        de: str = Form(""),
+        colonne: str = Form(""),
+        pour: str = Form(""),
+        con=Depends(get_db),
+    ):
+        tasks.advance(con, task_id, de)
+        return back(request, tasks_url(colonne, pour))
+
+    @app.post("/taches/{task_id:int}/supprimer")
+    def remove_task(
+        task_id: int, colonne: str = Form(""), pour: str = Form(""), con=Depends(get_db)
+    ):
+        tasks.remove(con, task_id)
+        return RedirectResponse(tasks_url(colonne, pour), status_code=303)
 
     return app
