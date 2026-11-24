@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from mcp.server.transport_security import TransportSecuritySettings
 
-from app import groceries, recipes, tasks
+from app import groceries, purchases, recipes, tasks
 from app.db import connect, data_version, migrate
 from app.mcp_server import AUTHOR, build_mcp
 from app.settings import Settings, bearer_ok, same_origin
@@ -25,6 +25,7 @@ SECTIONS = [
     {"id": "epicerie", "label": "Épicerie", "path": "/epicerie"},
     {"id": "recettes", "label": "Recettes", "path": "/recettes"},
     {"id": "taches", "label": "Tâches", "path": "/taches"},
+    {"id": "achats", "label": "Gros achats", "path": "/achats"},
 ]
 
 
@@ -67,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.globals["mcp_author"] = AUTHOR
     templates.env.globals["static"] = static_url
     templates.env.filters["day"] = tasks.day_label
+    templates.env.filters["dollars"] = purchases.dollars
 
     @app.middleware("http")
     async def identify(request: Request, call_next):
@@ -107,6 +109,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = build()
         response.headers.update(headers)
         return response
+
+    def with_query(path: str, **params: str) -> str:
+        query = urlencode({k: v for k, v in params.items() if v})
+        return f"{path}?{query}" if query else path
+
+    def dated_etag(con) -> str:
+        # La date compte : « en retard » et les fenêtres de Fait et d'Acheté récemment changent
+        # à minuit.
+        return f'"{data_version(con)}-{tasks.today()}"'
 
     def back(request: Request, url: str) -> Response:
         if request.headers.get("x-frigo-async"):
@@ -276,12 +287,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ("moi" if name == me else name), name
 
     def tasks_url(colonne: str, pour: str) -> str:
-        query = urlencode({k: v for k, v in {"colonne": colonne, "pour": pour}.items() if v})
-        return f"/taches?{query}" if query else "/taches"
-
-    def tasks_etag(con) -> str:
-        # La date compte : « en retard » et la fenêtre de Fait changent à minuit.
-        return f'"{data_version(con)}-{tasks.today()}"'
+        return with_query("/taches", colonne=colonne, pour=pour)
 
     def tasks_context(request: Request, con, colonne: str, pour: str) -> dict:
         column = tasks.column_for(colonne)
@@ -301,7 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
             "colors": {n: f"who-{i}" for i, n in enumerate(names)},
             "query": urlencode({"colonne": column.slug, "pour": pour}),
-            "etag": tasks_etag(con),
+            "etag": dated_etag(con),
         }
 
     def task_page(
@@ -348,7 +354,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def tasks_fragment(request: Request, colonne: str = "", pour: str = "", con=Depends(get_db)):
         return unless_unchanged(
             request,
-            tasks_etag(con),
+            dated_etag(con),
             lambda: render(
                 request, "_taches_liste.html", tasks_context(request, con, colonne, pour)
             ),
@@ -438,5 +444,179 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         tasks.remove(con, task_id)
         return RedirectResponse(tasks_url(colonne, pour), status_code=303)
+
+    def purchases_url(statut: str, etiquette: str) -> str:
+        return with_query("/achats", statut=statut, etiquette=etiquette)
+
+    def purchases_context(con, statut: str, etiquette: str) -> dict:
+        status = purchases.status_for(statut)
+        tags = purchases.tag_names(con)
+        key = groceries.normalize(etiquette)
+        etiquette = next((t for t in tags if groceries.normalize(t) == key), etiquette)
+        found = purchases.list_purchases(con, etiquette)
+        bought = [p for p in found if p.bought]
+        totals = purchases.totals(found)
+        if status:
+            shown, recent = [p for p in found if p.status == status.value], []
+        else:
+            shown, recent = (
+                [p for p in found if not p.bought],
+                [p for p in bought if p.recently_bought],
+            )
+        return {
+            "section": "achats",
+            "status": status,
+            "statut": status.slug if status else "",
+            "etiquette": etiquette,
+            "statuses": purchases.STATUSES,
+            "shown": shown,
+            "recent": recent,
+            "open_count": len(found) - len(bought),
+            "bought_count": len(bought),
+            "totals": [
+                (label, totals[value], value == "ready") for value, label in purchases.TOTALS
+            ],
+            "tags": tags,
+            "query": urlencode({"statut": status.slug if status else "", "etiquette": etiquette}),
+            "etag": dated_etag(con),
+        }
+
+    def purchase_page(
+        request: Request,
+        draft: purchases.Fields,
+        statut: str,
+        etiquette: str,
+        purchase: purchases.Purchase | None = None,
+        error: str = "",
+    ) -> Response:
+        return render(
+            request,
+            "achat.html",
+            {
+                "section": "achats",
+                "purchase": purchase,
+                "draft": draft,
+                "statuses": purchases.STATUSES,
+                "priorities": tasks.PRIORITY_LABELS,
+                "statut": statut,
+                "etiquette": etiquette,
+                "back": purchases_url(statut, etiquette),
+                "error": error,
+            },
+            status_code=422 if error else 200,
+        )
+
+    def purchase_form(titre: str, etiquettes: str, priorite: int, etat: str, details: str):
+        # Les montants sont lus à part : un montant invalide doit pouvoir réafficher la fiche.
+        return purchases.Fields(
+            title=titre,
+            details=details,
+            status=(purchases.status_for(etat) or purchases.STATUSES[0]).value,
+            priority=priorite,
+            tags=[t.strip() for t in etiquettes.split(",") if t.strip()],
+        )
+
+    @app.get("/achats")
+    def purchases_page(
+        request: Request, statut: str = "", etiquette: str = "", con=Depends(get_db)
+    ):
+        return render(request, "achats.html", purchases_context(con, statut, etiquette))
+
+    @app.get("/achats/liste")
+    def purchases_fragment(
+        request: Request, statut: str = "", etiquette: str = "", con=Depends(get_db)
+    ):
+        return unless_unchanged(
+            request,
+            dated_etag(con),
+            lambda: render(
+                request, "_achats_liste.html", purchases_context(con, statut, etiquette)
+            ),
+        )
+
+    @app.get("/achats/nouveau")
+    def new_purchase_page(request: Request, statut: str = "", etiquette: str = ""):
+        draft = purchases.Fields(
+            title="",
+            status=(purchases.status_for(statut) or purchases.STATUSES[0]).value,
+            tags=[etiquette] if etiquette.strip() else [],
+        )
+        return purchase_page(request, draft, statut, etiquette)
+
+    @app.post("/achats/ajouter")
+    def add_purchase(
+        request: Request,
+        titre: str = Form(""),
+        etiquettes: str = Form(""),
+        priorite: int = Form(tasks.NORMAL),
+        etat: str = Form(""),
+        budget: str = Form(""),
+        paye: str = Form(""),
+        details: str = Form(""),
+        statut: str = Form(""),
+        etiquette: str = Form(""),
+        con=Depends(get_db),
+    ):
+        draft = purchase_form(titre, etiquettes, priorite, etat, details)
+        try:
+            draft.budget = purchases.parse_amount(budget)
+            draft.paid = purchases.parse_amount(paye)
+            purchases.add(con, [draft], request.state.person)
+        except ValueError as error:
+            return purchase_page(request, draft, statut, etiquette, error=str(error))
+        # Vers une vue où le nouvel achat se voit, en gardant le filtre si possible.
+        filtered = purchases.status_for(statut)
+        if filtered and filtered.value != draft.status:
+            statut = purchases.status_named(draft.status).slug
+        if groceries.normalize(etiquette) not in map(groceries.normalize, draft.tags):
+            etiquette = ""
+        return RedirectResponse(purchases_url(statut, etiquette), status_code=303)
+
+    @app.get("/achats/{purchase_id:int}")
+    def purchase_sheet(
+        request: Request,
+        purchase_id: int,
+        statut: str = "",
+        etiquette: str = "",
+        con=Depends(get_db),
+    ):
+        purchase = purchases.get(con, purchase_id)
+        if purchase is None:
+            return RedirectResponse(purchases_url(statut, etiquette), status_code=303)
+        return purchase_page(request, purchase, statut, etiquette, purchase)
+
+    @app.post("/achats/{purchase_id:int}/modifier")
+    def edit_purchase(
+        request: Request,
+        purchase_id: int,
+        titre: str = Form(""),
+        etiquettes: str = Form(""),
+        priorite: int = Form(tasks.NORMAL),
+        etat: str = Form(""),
+        budget: str = Form(""),
+        paye: str = Form(""),
+        details: str = Form(""),
+        statut: str = Form(""),
+        etiquette: str = Form(""),
+        con=Depends(get_db),
+    ):
+        purchase = purchases.get(con, purchase_id)
+        if purchase is None:
+            return RedirectResponse(purchases_url(statut, etiquette), status_code=303)
+        draft = purchase_form(titre, etiquettes, priorite, etat, details)
+        try:
+            draft.budget = purchases.parse_amount(budget)
+            draft.paid = purchases.parse_amount(paye)
+            purchases.update(con, purchase_id, draft)
+        except ValueError as error:
+            return purchase_page(request, draft, statut, etiquette, purchase, str(error))
+        return RedirectResponse(purchases_url(statut, etiquette), status_code=303)
+
+    @app.post("/achats/{purchase_id:int}/supprimer")
+    def remove_purchase(
+        purchase_id: int, statut: str = Form(""), etiquette: str = Form(""), con=Depends(get_db)
+    ):
+        purchases.remove(con, purchase_id)
+        return RedirectResponse(purchases_url(statut, etiquette), status_code=303)
 
     return app

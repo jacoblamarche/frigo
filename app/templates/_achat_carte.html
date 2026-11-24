@@ -1,0 +1,20 @@
+<div class="card">
+  <div class="top">
+    <a class="title" href="/achats/{{ p.id }}?{{ query }}">{{ p.title }}</a>
+    <span class="pill p-{{ p.priority_label|lower }}">{{ p.priority_label }}</span>
+  </div>
+  <div class="meta">
+    {% for t in p.tags %}<span class="tag">{{ t }}</span>{% endfor %}
+    {% if p.bought %}
+    <span class="paid">
+      {%- if p.paid %}Payé <b>{{ p.paid|dollars }}</b>{% else %}Acheté{% endif %}
+      {%- if p.budget %} · budget {{ p.budget|dollars }}{% endif %}
+      {%- if p.gap %} · {{ p.gap }}{% endif -%}
+    </span>
+    {% else %}
+    <span>{{ p.status_label }}</span>
+    {% endif %}
+    {% if p.added_by == mcp_author %}<span class="by" title="Ajouté par {{ mcp_author }}">{{ mcp_author }}</span>{% endif %}
+    {% if p.budget and not p.bought %}<span class="budget">≈ {{ p.budget|dollars }}</span>{% endif %}
+  </div>
+</div>

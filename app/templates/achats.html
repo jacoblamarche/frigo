@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Gros achats · frigo{% endblock %}
+{% block heading %}Gros achats{% endblock %}
+{% block content %}
+<section class="screen">
+  <div id="liste" data-src="/achats/liste?{{ query }}" data-etag='{{ etag }}'>
+    {% include "_achats_liste.html" %}
+  </div>
+  <a class="btn add-card" href="/achats/nouveau?{{ query }}">+ Nouveau gros achat</a>
+</section>
+{% endblock %}

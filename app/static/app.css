@@ -122,7 +122,19 @@ header .sub { color: var(--muted); font-size: 13px; margin-left: 8px; font-weigh
 .who-1 { background: #8b5cf6; }
 .who-2 { background: #d97706; }
 .late { color: var(--danger); font-weight: 600; }
-.btn.add-task { display: block; margin-top: 10px; padding: 11px; text-align: center; text-decoration: none; background: var(--card); color: var(--accent); border: 1px dashed #c9c4bb; }
+.btn.add-card { display: block; margin-top: 10px; padding: 11px; text-align: center; text-decoration: none; background: var(--card); color: var(--accent); border: 1px dashed #c9c4bb; }
+
+.totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 12px; }
+.total { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px; min-width: 0; }
+.total .lbl { font-size: 12px; color: var(--muted); }
+.total .amt { font-size: 17px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.total.ready { border-color: var(--accent); background: var(--accent-soft); }
+.total.ready .amt { color: var(--accent); }
+.chips + .chips { margin-top: -4px; }
+.card .budget { margin-left: auto; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.card .paid b { color: var(--accent); }
+.sheet .links { display: grid; gap: 4px; margin-top: -4px; }
+.sheet .links a { color: var(--accent); font-size: 14px; font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; background: var(--card); border-top: 1px solid var(--line); display: flex; justify-content: center; padding-bottom: env(safe-area-inset-bottom); }
 nav.tabs .inner { display: flex; width: 100%; max-width: 480px; }

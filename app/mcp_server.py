@@ -7,13 +7,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from app import groceries, recipes, tasks
+from app import groceries, purchases, recipes, tasks
 from app.db import connect
 
 AUTHOR = "Claude"
 
 INSTRUCTIONS = """\
-frigo tient la liste d'épicerie et les tâches de la maison de Jacob et Catherine.
+frigo tient la liste d'épicerie, les tâches et les gros achats de la maison de Jacob et
+Catherine.
 
 Épicerie :
 - Pour une recette, ajouter tous les ingrédients en un seul appel à add_groceries, avec le nom
@@ -47,10 +48,23 @@ Tâches (un tableau À faire, En cours, Fait) :
   de list_tasks. Priorité `normal`, sauf si c'est urgent ou demandé.
 - Pour avancer, ramener ou réassigner une tâche, update_task.
 - Les identifiants à passer aux autres outils viennent de list_tasks.
+
+Gros achats (Idée, À l'étude, Prêt à acheter, Acheté) :
+- Avant d'ajouter, consulter list_purchases : si l'achat y est déjà, le modifier plutôt que
+  d'en créer un deuxième. Reprendre une étiquette de `tags` (« music room ») plutôt que d'en
+  inventer une variante.
+- Statut `idea`, sauf si c'est déjà à l'étude ou décidé. Priorité `normal`, sauf si c'est
+  urgent ou demandé.
+- Montants en dollars entiers : « autour de 1 200 $ » donne `budget` 1200.
+- « On l'a payé 480 $ » : update_purchase avec `status` `bought` et `paid` 480.
+- Modèles comparés, liens et notes vont dans `details`. update_purchase remplace tout le
+  texte : pour ajouter une note, repartir des détails renvoyés par list_purchases.
+- Les identifiants à passer aux autres outils viennent de list_purchases.
 """
 
 Status = Literal["todo", "doing", "done"]
 Priority = Literal["low", "normal", "high"]
+PurchaseStatus = Literal["idea", "researching", "ready", "bought"]
 
 
 class Grocery(BaseModel):
@@ -132,6 +146,54 @@ class NewTask(BaseModel):
     priority: Priority = "normal"
     assignee: str = Field("", description="Prénom parmi `people` de list_tasks ; vide : personne")
     due: str = Field("", description="Échéance AAAA-MM-JJ ; vide : aucune")
+
+
+class PurchaseOut(BaseModel):
+    id: int
+    title: str
+    details: str
+    status: PurchaseStatus
+    priority: Priority
+    budget: int | None = Field(description="Budget estimé en dollars")
+    paid: int | None = Field(description="Prix payé en dollars")
+    tags: list[str]
+    bought_on: str = Field(description="Date d'achat AAAA-MM-JJ, pour les achats faits")
+    added_by: str
+
+
+class PurchaseList(BaseModel):
+    purchases: list[PurchaseOut]
+    totals: dict[str, int] = Field(
+        description="Somme des budgets par statut en cours, en dollars, selon le filtre `tag`"
+    )
+    tags: list[str] = Field(description="Étiquettes déjà utilisées par les gros achats")
+
+
+class NewPurchase(BaseModel):
+    title: str = Field(description="Ex. « Système de son »")
+    details: str = Field("", description="Modèles comparés, liens, notes")
+    status: PurchaseStatus = "idea"
+    priority: Priority = "normal"
+    budget: int | None = Field(None, description="Budget estimé en dollars, ex. 1200")
+    paid: int | None = Field(None, description="Prix payé en dollars, une fois acheté")
+    tags: list[str] = Field(
+        default_factory=list, description="La pièce ou le projet, ex. « music room »"
+    )
+
+
+def _purchase_out(purchase: purchases.Purchase) -> PurchaseOut:
+    return PurchaseOut(
+        id=purchase.id,
+        title=purchase.title,
+        details=purchase.details,
+        status=purchase.status,
+        priority=tasks.PRIORITIES[purchase.priority],
+        budget=purchase.budget,
+        paid=purchase.paid,
+        tags=purchase.tags,
+        bought_on=purchase.bought_on.isoformat() if purchase.bought_on else "",
+        added_by=purchase.added_by,
+    )
 
 
 def _task_out(task: tasks.Task) -> TaskOut:
@@ -371,6 +433,88 @@ def build_mcp(db_path: Path, people: list[str]) -> MCPServer:
         """Supprime des tâches, faites ou non."""
         with db() as con:
             done = [i for i in ids if tasks.remove(con, i)]
+        return IdsResult(done=done, skipped=[i for i in ids if i not in done])
+
+    @mcp.tool()
+    def list_purchases(
+        status: PurchaseStatus | None = None, tag: str = "", include_bought: bool = False
+    ) -> PurchaseList:
+        """Liste les gros achats en cours ; les achetés seulement avec `include_bought` ou
+        `status` « bought ». `tag` filtre par étiquette."""
+        with db() as con:
+            found = purchases.list_purchases(con, tag)
+            tags = purchases.tag_names(con)
+        totals = purchases.totals(found)
+        if status:
+            found = [p for p in found if p.status == status]
+        elif not include_bought:
+            found = [p for p in found if not p.bought]
+        return PurchaseList(purchases=[_purchase_out(p) for p in found], totals=totals, tags=tags)
+
+    @mcp.tool()
+    def add_purchases(items: list[NewPurchase]) -> list[PurchaseOut]:
+        """Ajoute des gros achats. Si l'un est invalide, aucun n'est ajouté."""
+        with db() as con:
+            try:
+                ids = purchases.add(
+                    con,
+                    [
+                        purchases.Fields(
+                            title=p.title,
+                            details=p.details,
+                            status=p.status,
+                            priority=tasks.PRIORITIES.index(p.priority),
+                            budget=p.budget or None,
+                            paid=p.paid or None,
+                            tags=p.tags,
+                        )
+                        for p in items
+                    ],
+                    AUTHOR,
+                )
+            except ValueError as error:
+                raise ToolError(str(error)) from error
+            return [_purchase_out(purchases.get(con, i)) for i in ids]
+
+    @mcp.tool()
+    def update_purchase(
+        id: int,
+        title: str | None = None,
+        details: str | None = None,
+        status: PurchaseStatus | None = None,
+        priority: Priority | None = None,
+        budget: int | None = None,
+        paid: int | None = None,
+        tags: list[str] | None = None,
+    ) -> PurchaseOut:
+        """Modifie un gros achat. Seuls les champs fournis changent ; `budget` ou `paid` à 0
+        efface le montant, `tags` remplace toutes les étiquettes."""
+        changes = {
+            "title": title,
+            "details": details,
+            "status": status,
+            "priority": tasks.PRIORITIES.index(priority) if priority else None,
+            "tags": tags,
+        }
+        with db() as con:
+            purchase = purchases.get(con, id)
+            if purchase is None:
+                raise ToolError(f"Aucun gros achat {id}.")
+            fields = replace(purchase, **{k: v for k, v in changes.items() if v is not None})
+            if budget is not None:
+                fields.budget = budget or None
+            if paid is not None:
+                fields.paid = paid or None
+            try:
+                return _purchase_out(purchases.update(con, id, fields))
+            except (LookupError, ValueError) as error:
+                raise ToolError(str(error)) from error
+
+    @mcp.tool()
+    def remove_purchases(ids: list[int]) -> IdsResult:
+        """Supprime des gros achats, achetés ou non."""
+        with db() as con:
+            done = [i for i in ids if purchases.remove(con, i)]
         return IdsResult(done=done, skipped=[i for i in ids if i not in done])
 
     return mcp

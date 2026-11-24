@@ -64,6 +64,10 @@ def test_tools_are_listed(mcp):
         "add_tasks",
         "update_task",
         "remove_tasks",
+        "list_purchases",
+        "add_purchases",
+        "update_purchase",
+        "remove_purchases",
     }
 
 
@@ -319,3 +323,84 @@ def test_remove_tasks(mcp):
     [task] = call(mcp, "add_tasks", items=[{"title": "Tondre"}])
     removed = call(mcp, "remove_tasks", ids=[task["id"], 999])
     assert removed == {"done": [task["id"]], "skipped": [999]}
+
+
+def test_claude_plans_purchases(mcp):
+    added = call(
+        mcp,
+        "add_purchases",
+        items=[
+            {
+                "title": "système de son",
+                "tags": ["music room"],
+                "priority": "high",
+                "budget": 1200,
+                "details": "HS8",
+            },
+            {"title": "Laveuse", "tags": ["Buanderie"], "status": "researching", "budget": 0},
+        ],
+    )
+    assert [
+        (p["title"], p["status"], p["priority"], p["budget"], p["tags"], p["added_by"])
+        for p in added
+    ] == [
+        ("Système de son", "idea", "high", 1200, ["Music room"], "Claude"),
+        ("Laveuse", "researching", "normal", None, ["Buanderie"], "Claude"),
+    ]
+
+    listed = call(mcp, "list_purchases")
+    assert [p["title"] for p in listed["purchases"]] == ["Système de son", "Laveuse"]
+    assert listed["totals"] == {"ready": 0, "researching": 0, "idea": 1200}
+    assert listed["tags"] == ["Buanderie", "Music room"]
+    assert [p["title"] for p in call(mcp, "list_purchases", tag="MUSIC ROOM")["purchases"]] == [
+        "Système de son"
+    ]
+    assert [p["title"] for p in call(mcp, "list_purchases", status="researching")["purchases"]] == [
+        "Laveuse"
+    ]
+    assert "Ajouté par Claude" in mcp.get("/achats").text
+
+
+def test_a_bad_purchase_adds_nothing(mcp):
+    message = tool_error(mcp, "add_purchases", items=[{"title": "Divan"}, {"title": " "}])
+    assert "Un gros achat doit avoir un titre." in message
+    assert "Montant hors limites" in tool_error(
+        mcp, "add_purchases", items=[{"title": "Divan", "budget": -10}]
+    )
+    assert call(mcp, "list_purchases")["purchases"] == []
+
+
+def test_update_purchase_changes_only_what_is_given(mcp):
+    [purchase] = call(
+        mcp,
+        "add_purchases",
+        items=[{"title": "Aspirateur", "budget": 550, "tags": ["Maison"], "details": "Roborock"}],
+    )
+    bought = call(mcp, "update_purchase", id=purchase["id"], status="bought", paid=480)
+    assert (bought["status"], bought["budget"], bought["paid"], bought["details"]) == (
+        "bought",
+        550,
+        480,
+        "Roborock",
+    )
+    assert bought["tags"] == ["Maison"]
+    assert bought["bought_on"] == tasks.today().isoformat()
+    assert call(mcp, "list_purchases")["purchases"] == []
+    assert len(call(mcp, "list_purchases", include_bought=True)["purchases"]) == 1
+    assert len(call(mcp, "list_purchases", status="bought")["purchases"]) == 1
+
+    cleared = call(mcp, "update_purchase", id=purchase["id"], budget=0, tags=[], status="ready")
+    assert (cleared["budget"], cleared["paid"], cleared["tags"], cleared["bought_on"]) == (
+        None,
+        480,
+        [],
+        "",
+    )
+    assert "Aucun gros achat 999" in tool_error(mcp, "update_purchase", id=999, paid=10)
+    assert "Montant hors limites" in tool_error(mcp, "update_purchase", id=purchase["id"], paid=-1)
+
+
+def test_remove_purchases(mcp):
+    [purchase] = call(mcp, "add_purchases", items=[{"title": "Divan"}])
+    removed = call(mcp, "remove_purchases", ids=[purchase["id"], 999])
+    assert removed == {"done": [purchase["id"]], "skipped": [999]}

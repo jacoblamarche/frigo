@@ -108,6 +108,30 @@ MIGRATIONS = [
         updated_at TEXT NOT NULL
     );
     """,
+    # Montants en dollars entiers, NULL quand on ne les connaît pas. Les étiquettes reprennent
+    # la table de l'épicerie.
+    """
+    CREATE TABLE purchases (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        details TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'idea'
+            CHECK (status IN ('idea', 'researching', 'ready', 'bought')),
+        priority INTEGER NOT NULL DEFAULT 1 CHECK (priority IN (0, 1, 2)),
+        budget INTEGER,
+        paid INTEGER,
+        bought_at TEXT,
+        added_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE purchase_tags (
+        purchase_id INTEGER NOT NULL REFERENCES purchases (id) ON DELETE CASCADE,
+        tag_id INTEGER NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
+        PRIMARY KEY (purchase_id, tag_id)
+    );
+    """,
 ]
 
 
