@@ -4,7 +4,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from app import groceries, recipes, tasks
+from app import groceries, purchases, recipes, tasks
 from app.db import connect
 from app.main import create_app
 from app.settings import Settings
@@ -404,3 +404,153 @@ def test_the_task_fragment_answers_304_until_something_changes(client):
     new_task(client, "Tondre")
     changed = client.get("/taches/liste", headers={"If-None-Match": etag})
     assert changed.status_code == 200 and "Tondre" in changed.text
+
+
+def purchase_ids(settings):
+    with closing(connect(settings.data_dir / "frigo.sqlite3")) as con:
+        return {p.title: p.id for p in purchases.list_purchases(con)}
+
+
+def new_purchase(client, titre, **fields):
+    return client.post("/achats/ajouter", data={"titre": titre, **fields}, follow_redirects=False)
+
+
+def test_purchases_tab_starts_empty(client):
+    page = client.get("/achats").text
+    assert 'href="/achats" class="on"' in page
+    assert "Aucun gros achat en vue." in page
+    assert page.count('<div class="amt">0\xa0$</div>') == 3
+    assert 'href="/achats/nouveau?statut=&amp;etiquette="' in page
+
+
+def test_adding_a_purchase_shows_its_card(client, settings):
+    response = new_purchase(
+        client,
+        "système de son",
+        etiquettes="music room, Music Room",
+        priorite="2",
+        etat="pret",
+        budget="1 200 $",
+        details="HS8 : https://www.steves.ca/hs8",
+    )
+    assert response.headers["location"] == "/achats"
+
+    page = client.get("/achats").text
+    assert "Système de son" in page
+    assert '<span class="pill p-haute">Haute</span>' in page
+    assert '<span class="tag">Music room</span>' in page
+    assert "Prêt à acheter</span>" in page
+    assert '<span class="budget">≈ 1\xa0200\xa0$</span>' in page
+    assert "HS8" not in page
+    assert re.search(r'total ready"><div class="lbl">Prêt à acheter</div>.*1\xa0200\xa0\$', page)
+
+    sheet = client.get(f"/achats/{purchase_ids(settings)['Système de son']}").text
+    assert 'value="Music room"' in sheet
+    assert 'value="1\xa0200\xa0$"' in sheet
+    assert 'value="pret" checked' in sheet
+    assert '<a href="https://www.steves.ca/hs8" target="_blank"' in sheet
+    assert ">steves.ca/hs8</a>" in sheet
+    assert "Ajouté par Jacob" in sheet
+
+
+def test_a_new_purchase_takes_the_current_filter(client):
+    sheet = client.get("/achats/nouveau?statut=a-l-etude&etiquette=garage").text
+    assert 'value="a-l-etude" checked' in sheet
+    assert 'name="etiquettes" value="garage"' in sheet
+    assert 'value="1" checked' in sheet
+    assert 'value="idee" checked' in client.get("/achats/nouveau").text
+
+
+def test_adding_goes_where_the_new_purchase_shows(client):
+    response = new_purchase(client, "Divan", etat="idee", statut="pret", etiquette="salon")
+    assert response.headers["location"] == "/achats?statut=idee"
+    response = new_purchase(
+        client, "Laveuse", etat="pret", etiquettes="Buanderie", statut="pret", etiquette="buanderie"
+    )
+    assert response.headers["location"] == "/achats?statut=pret&etiquette=buanderie"
+
+
+def test_a_bad_amount_keeps_the_draft(client):
+    response = new_purchase(client, "Divan", budget="beaucoup", paye="12", details="Cuir")
+    assert response.status_code == 422
+    assert "Montant invalide : « beaucoup »" in response.text
+    assert 'value="Divan"' in response.text and "Cuir</textarea>" in response.text
+    assert 'name="budget" value="beaucoup"' in response.text
+    assert 'name="paye" value="12"' in response.text
+    assert "Aucun gros achat en vue." in client.get("/achats").text
+
+
+def test_status_and_tag_filters_combine(client):
+    new_purchase(client, "Son", etiquettes="Music room", etat="pret", budget="1200")
+    new_purchase(client, "Panneaux", etiquettes="Music room", etat="a-l-etude", budget="350")
+    new_purchase(client, "Laveuse", etiquettes="Buanderie", etat="a-l-etude", budget="1100")
+    new_purchase(client, "Aspirateur", etat="achete", paye="480")
+
+    page = client.get("/achats").text
+    assert re.search(r'En cours <span class="n">3</span>', page)
+    assert re.search(r'Acheté <span class="n">1</span>', page)
+    assert "Acheté récemment" in page and "Aspirateur" in page
+    assert re.findall(r'class="chip[^"]*" href="/achats\?statut=&amp;etiquette=([^"]+)"', page) == [
+        "Buanderie",
+        "Music+room",
+    ]
+
+    studied = client.get("/achats?statut=a-l-etude").text
+    assert "Panneaux" in studied and "Laveuse" in studied and "Son" not in studied
+    assert "Acheté récemment" not in studied
+
+    room = client.get("/achats?statut=a-l-etude&etiquette=music%20room").text
+    assert "Panneaux" in room and "Laveuse" not in room
+    assert re.search(r'En cours <span class="n">2</span>', room)
+    assert (
+        '<a class="chip on" href="/achats?statut=a-l-etude&amp;etiquette=">Music room</a>' in room
+    )
+    assert re.search(r"À l&#39;étude</div><div class=\"amt\">350\xa0\$", room)
+
+    assert "Rien dans « Idée »." in client.get("/achats?statut=idee").text
+
+
+def test_bought_cards_compare_the_price_to_the_budget(client):
+    new_purchase(client, "Aspirateur robot", etat="achete", budget="550", paye="479,99")
+    new_purchase(client, "Laveuse", etat="achete", budget="1 100")
+    page = client.get("/achats?statut=achete").text
+    assert (
+        '<span class="paid">Payé <b>480\xa0$</b> · budget 550\xa0$ · 70\xa0$ sous le budget</span>'
+        in page
+    )
+    assert '<span class="paid">Acheté · budget 1\xa0100\xa0$</span>' in page
+    assert 'class="budget"' not in page
+
+
+def test_editing_a_purchase_returns_to_the_same_view(client, settings):
+    new_purchase(client, "Son", etat="pret", budget="1200")
+    purchase_id = purchase_ids(settings)["Son"]
+    response = client.post(
+        f"/achats/{purchase_id}/modifier",
+        data={"titre": "Son", "etat": "achete", "paye": "1150", "statut": "pret"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"] == "/achats?statut=pret"
+    sheet = client.get(f"/achats/{purchase_id}").text
+    assert "acheté aujourd&#39;hui" in sheet
+    assert 'name="budget" value=""' in sheet
+
+
+def test_deleting_a_purchase(client, settings):
+    new_purchase(client, "Divan")
+    purchase_id = purchase_ids(settings)["Divan"]
+    assert "data-confirm=" in client.get(f"/achats/{purchase_id}").text
+    response = client.post(
+        f"/achats/{purchase_id}/supprimer", data={"statut": "idee"}, follow_redirects=False
+    )
+    assert response.headers["location"] == "/achats?statut=idee"
+    assert "Aucun gros achat en vue." in client.get("/achats").text
+    assert client.get(f"/achats/{purchase_id}", follow_redirects=False).status_code == 303
+
+
+def test_the_purchase_fragment_answers_304_until_something_changes(client):
+    etag = client.get("/achats/liste").headers["etag"]
+    assert client.get("/achats/liste", headers={"If-None-Match": etag}).status_code == 304
+    new_purchase(client, "Divan")
+    changed = client.get("/achats/liste", headers={"If-None-Match": etag})
+    assert changed.status_code == 200 and "Divan" in changed.text

@@ -2,7 +2,7 @@ name: Revue Claude
 
 on:
   pull_request:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened]
 
 permissions:
   contents: read
@@ -23,11 +23,72 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      # Chaque synthèse note le commit revu : la revue suivante ne porte que sur ce qui a changé
+      # depuis. Une revue annulée n'en note pas, donc ses commits sont repris la fois d'après.
+      - name: Portée
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          last=$(gh pr view "$PR" --json comments \
+            --jq '[.comments[].body | capture("<!-- revue-claude: (?<sha>[0-9a-f]{40}) -->") | .sha] | last // ""')
+          if [ "$last" = "$HEAD_SHA" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$last" ] && git merge-base --is-ancestor "$last" "$HEAD_SHA" 2>/dev/null; then
+            echo "base=$last" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: anthropics/claude-code-action@v1
+        if: steps.scope.outputs.skip != 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: https://github.com/anthropics/claude-plugins-official.git
-          plugins: code-review@claude-plugins-official
-          prompt: /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh issue view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(git diff:*),Bash(git log:*)"
+          prompt: |
+            Dépôt : ${{ github.repository }}
+            PR : ${{ github.event.pull_request.number }}
+            Commit à revoir : ${{ github.event.pull_request.head.sha }}
+            Déjà revu jusqu'à : ${{ steps.scope.outputs.base || 'rien (première revue)' }}
+
+            Fais la revue de code de cette PR.
+
+            1. Portée.
+               - Première revue : toute la PR (`gh pr diff`).
+               - Sinon, seulement ce qui a changé depuis le commit déjà revu
+                 (`git diff <déjà revu> <commit à revoir>`). Le reste de la PR sert de contexte,
+                 pas de cible.
+            2. Contexte. Lis `CLAUDE.md` : ses règles et sa section « Revue de code »
+               s'appliquent. Lis le titre et la description de la PR (`gh pr view`), puis
+               l'issue liée par « Ferme #N » (`gh issue view`) : ses décisions sont voulues.
+               Lis les commentaires déjà postés sur le code
+               (`gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`)
+               pour ne pas signaler deux fois le même problème.
+            3. Ne cherche que des problèmes sûrs et importants, dans le code de la portée :
+               - un bug : le code plante, ou donne un mauvais résultat ;
+               - un vrai problème de sécurité ;
+               - une infraction claire à une règle de CLAUDE.md, que tu peux citer.
+               Ne signale pas : le style ou le formatage, ce que ruff détecte, les suggestions
+               subjectives, les problèmes antérieurs à la PR, ce qui ne dépend que d'entrées
+               improbables.
+            4. Avant de poster, vérifie chaque problème en relisant le code concerné, et écarte
+               ceux dont tu n'es pas certain. Une fausse alerte coûte plus cher qu'un oubli.
+            5. Poste chaque problème confirmé sur sa ligne avec
+               `mcp__github_inline_comment__create_inline_comment` (`confirmed: true`), en
+               français : une phrase qui résume la correction, puis la raison, avec la règle de
+               CLAUDE.md citée s'il y a lieu. Ajoute une suggestion applicable seulement si elle
+               règle tout le problème.
+            6. Termine toujours par un seul commentaire de synthèse avec `gh pr comment`, de
+               cette forme :
+
+               ## Revue Claude
+
+               <« Toute la PR » ou « Commits depuis <déjà revu, 7 caractères> »>, jusqu'à <commit à revoir, 7 caractères>.
+               <« Aucun problème trouvé. » ou « N problème(s) signalé(s) sur le code. »>
+
+               <!-- revue-claude: ${{ github.event.pull_request.head.sha }} -->
+
+               Recopie la dernière ligne telle quelle : la prochaine revue repart de ce commit.

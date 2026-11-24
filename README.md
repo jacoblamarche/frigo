@@ -4,9 +4,6 @@ La porte du frigo, version web : la liste d'épicerie, les tâches de la maison 
 achats à planifier, pour deux personnes. Claude peut y ajouter des choses par un serveur MCP
 intégré.
 
-Pour l'instant : l'épicerie, les recettes importées par Claude et les tâches. Les gros achats
-suivent.
-
 ## Épicerie
 
 - Ajout en texte libre : « lait 2 L », « 3 oignons », « 1 lb bœuf haché #lasagne ». La
@@ -40,6 +37,21 @@ suivent.
   supprimer.
 - Les jours affichés suivent l'heure de l'Est (`America/Toronto`).
 
+## Gros achats
+
+- Les dépenses à planifier, comme un système de son pour la music room. Un achat a un titre,
+  des étiquettes (la pièce, le projet), une priorité, un statut (Idée, À l'étude, Prêt à
+  acheter, Acheté), un budget estimé, un prix payé et des détails en texte libre.
+- Les montants sont en dollars entiers : « 1 200 $ », « ~1200 » ou « 479,99 » (arrondi à
+  480).
+- En haut, le total des budgets par statut, « Prêt à acheter » en évidence.
+- La liste se trie par priorité, puis par budget. Elle se filtre par statut (« En cours » par
+  défaut, c'est-à-dire tout sauf Acheté) et par étiquette. Sous les achats en cours, ceux des
+  30 derniers jours ; la puce « Acheté » les montre tous.
+- Un achat fait compare le prix au budget : « Payé 480 $ · budget 550 $ · 70 $ sous le
+  budget ».
+- Les liens des détails sont cliquables dans la fiche.
+
 ## Serveur MCP
 
 Sur `/mcp` (HTTP streamable, sans état), protégé par le jeton `FRIGO_MCP_TOKEN`. Sans jeton
@@ -56,8 +68,12 @@ directement.
 | `add_tasks` | ajoute des tâches ; si l'une est invalide, aucune n'est ajoutée |
 | `update_task` | change n'importe quel champ d'une tâche, dont sa colonne |
 | `remove_tasks` | supprime des tâches |
+| `list_purchases` | les gros achats en cours (les achetés sur demande), filtrables par statut et par étiquette, plus les totaux et les étiquettes existantes |
+| `add_purchases` | ajoute des gros achats ; si l'un est invalide, aucun n'est ajouté |
+| `update_purchase` | change n'importe quel champ d'un gros achat ; un montant à 0 l'efface |
+| `remove_purchases` | supprime des gros achats |
 
-Les articles et les tâches ajoutés par le MCP portent une pastille « Claude ». Les consignes
+Les articles, les tâches et les gros achats ajoutés par le MCP portent une pastille « Claude ». Les consignes
 données à Claude (une recette = un appel, réutiliser le nom d'un article équivalent) sont dans
 `app/mcp_server.py`.
 
@@ -117,8 +133,10 @@ gh secret set DOCKERHUB_TOKEN -R jacoblamarche/frigo
 
 ## Revue Claude
 
-À l'ouverture d'une PR (hors brouillon), Claude la relit avec le plugin `code-review` et
-commente les problèmes qu'il juge sûrs. Il faut l'app GitHub
+À l'ouverture d'une PR (hors brouillon), puis à chaque push, Claude relit ce qui a changé
+depuis sa dernière revue. Il signale sur le code les problèmes dont il est sûr (bugs, sécurité,
+règles de `CLAUDE.md`), puis laisse une synthèse qui note le dernier commit revu. Les règles du
+dépôt et les consignes de revue sont dans [`CLAUDE.md`](CLAUDE.md). Il faut l'app GitHub
 [Claude](https://github.com/apps/claude) installée sur le dépôt, et un jeton d'abonnement
 Claude dans les secrets :
 

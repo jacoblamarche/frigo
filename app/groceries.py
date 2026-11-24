@@ -106,7 +106,7 @@ def combine_quantities(first: str, second: str) -> str:
     return f"{first} + {second}"
 
 
-def _tag_id(con: sqlite3.Connection, name: str) -> int:
+def tag_id(con: sqlite3.Connection, name: str) -> int:
     con.execute(
         "INSERT INTO tags (name, name_key) VALUES (?, ?) ON CONFLICT (name_key) DO NOTHING",
         (name, normalize(name)),
@@ -118,7 +118,7 @@ def _add_tags(con: sqlite3.Connection, item_id: int, tags: list[str]) -> None:
     for tag in tags:
         con.execute(
             "INSERT OR IGNORE INTO grocery_item_tags (item_id, tag_id) VALUES (?, ?)",
-            (item_id, _tag_id(con, tag)),
+            (item_id, tag_id(con, tag)),
         )
 
 

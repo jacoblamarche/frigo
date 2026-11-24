@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ purchase.title if purchase else 'Nouveau gros achat' }} · frigo{% endblock %}
+{% block heading %}{{ 'Gros achat' if purchase else 'Nouveau gros achat' }}{% endblock %}
+{% block content %}
+<section class="screen">
+  <p class="hint"><a href="{{ back }}">← Gros achats</a></p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form class="sheet rise" method="post" action="{{ '/achats/%d/modifier' % purchase.id if purchase else '/achats/ajouter' }}">
+    <label>Titre <input name="titre" value="{{ draft.title }}" required autocomplete="off" {{ 'autofocus' if not purchase }}></label>
+    <label>Étiquettes <input name="etiquettes" value="{{ draft.tags|join(', ') }}" placeholder="La pièce ou le projet, séparés par des virgules" autocomplete="off"></label>
+    <fieldset>
+      <legend>Priorité</legend>
+      <div class="opts">
+        {% for label in priorities %}
+        <label><input type="radio" name="priorite" value="{{ loop.index0 }}" {{ 'checked' if loop.index0 == draft.priority }}><span>{{ label }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Statut</legend>
+      <div class="opts">
+        {% for s in statuses %}
+        <label><input type="radio" name="etat" value="{{ s.slug }}" {{ 'checked' if s.value == draft.status }}><span>{{ s.label }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <div class="two">
+      <label>Budget estimé <input name="budget" value="{{ typed.budget if typed else (draft.budget|dollars if draft.budget) }}" inputmode="decimal" placeholder="Ex. 1 200 $" autocomplete="off"></label>
+      <label>Prix payé <input name="paye" value="{{ typed.paye if typed else (draft.paid|dollars if draft.paid) }}" inputmode="decimal" placeholder="À l'achat" autocomplete="off"></label>
+    </div>
+    <label>Détails <textarea name="details" rows="6" placeholder="Modèles comparés, liens, notes">{{ draft.details }}</textarea></label>
+    {% if draft.links %}
+    <div class="links">
+      {% for url, label in draft.links %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label }}</a>{% endfor %}
+    </div>
+    {% endif %}
+    {% if purchase %}<p class="hint">Ajouté par {{ purchase.added_by }}{% if purchase.bought_on %} · acheté {{ purchase.bought_on|day }}{% endif %}</p>{% endif %}
+    <input type="hidden" name="statut" value="{{ statut }}">
+    <input type="hidden" name="etiquette" value="{{ etiquette }}">
+    <button class="btn">Enregistrer</button>
+  </form>
+  {% if purchase %}
+  <form method="post" action="/achats/{{ purchase.id }}/supprimer" data-confirm="Supprimer le gros achat « {{ purchase.title }} » ?">
+    <input type="hidden" name="statut" value="{{ statut }}">
+    <input type="hidden" name="etiquette" value="{{ etiquette }}">
+    <button class="btn ghost delete">Supprimer le gros achat</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

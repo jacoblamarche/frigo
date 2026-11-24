@@ -1,0 +1,36 @@
+<div class="totals">
+  {% for label, amount, ready in totals %}
+  <div class="total {{ 'ready' if ready }}"><div class="lbl">{{ label }}</div><div class="amt">{{ amount|dollars }}</div></div>
+  {% endfor %}
+</div>
+<div class="chips">
+  <a class="chip {{ 'on' if not status }}" href="/achats?{{ {'etiquette': etiquette}|urlencode }}">En cours <span class="n">{{ open_count }}</span></a>
+  {% for s in statuses %}
+  <a class="chip {{ 'on' if s == status }}" href="/achats?{{ {'statut': s.slug, 'etiquette': etiquette}|urlencode }}">{{ s.label }}{% if s.value == 'bought' %} <span class="n">{{ bought_count }}</span>{% endif %}</a>
+  {% endfor %}
+</div>
+{% if tags %}
+<div class="chips">
+  {% for t in tags %}
+  {# Toucher l'étiquette choisie retire le filtre. #}
+  <a class="chip {{ 'on' if t == etiquette }}" href="/achats?{{ {'statut': statut, 'etiquette': '' if t == etiquette else t}|urlencode }}">{{ t }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if shown %}
+<div class="cards">
+  {% for p in shown %}{% include "_achat_carte.html" %}{% endfor %}
+</div>
+{% elif status %}
+<p class="empty">Rien dans « {{ status.label }} ».</p>
+{% else %}
+<p class="empty">Aucun gros achat en vue.</p>
+{% endif %}
+
+{% if recent %}
+<div class="section-title"><span>Acheté récemment</span></div>
+<div class="cards">
+  {% for p in recent %}{% include "_achat_carte.html" %}{% endfor %}
+</div>
+{% endif %}
