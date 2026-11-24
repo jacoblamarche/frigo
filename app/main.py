@@ -488,7 +488,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         etiquette: str,
         purchase: purchases.Purchase | None = None,
         error: str = "",
+        typed: dict[str, str] | None = None,
     ) -> Response:
+        """`typed` : les montants tels que tapés, pour réafficher une fiche invalide."""
         return render(
             request,
             "achat.html",
@@ -496,6 +498,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "section": "achats",
                 "purchase": purchase,
                 "draft": draft,
+                "typed": typed or {},
                 "statuses": purchases.STATUSES,
                 "priorities": tasks.PRIORITY_LABELS,
                 "statut": statut,
@@ -563,7 +566,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             draft.paid = purchases.parse_amount(paye)
             purchases.add(con, [draft], request.state.person)
         except ValueError as error:
-            return purchase_page(request, draft, statut, etiquette, error=str(error))
+            typed = {"budget": budget, "paye": paye}
+            return purchase_page(request, draft, statut, etiquette, None, str(error), typed)
         # Vers une vue où le nouvel achat se voit, en gardant le filtre si possible.
         filtered = purchases.status_for(statut)
         if filtered and filtered.value != draft.status:
@@ -609,7 +613,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             draft.paid = purchases.parse_amount(paye)
             purchases.update(con, purchase_id, draft)
         except ValueError as error:
-            return purchase_page(request, draft, statut, etiquette, purchase, str(error))
+            typed = {"budget": budget, "paye": paye}
+            return purchase_page(request, draft, statut, etiquette, purchase, str(error), typed)
         return RedirectResponse(purchases_url(statut, etiquette), status_code=303)
 
     @app.post("/achats/{purchase_id:int}/supprimer")

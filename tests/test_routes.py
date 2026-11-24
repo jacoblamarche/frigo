@@ -471,10 +471,12 @@ def test_adding_goes_where_the_new_purchase_shows(client):
 
 
 def test_a_bad_amount_keeps_the_draft(client):
-    response = new_purchase(client, "Divan", budget="beaucoup", details="Cuir")
+    response = new_purchase(client, "Divan", budget="beaucoup", paye="12", details="Cuir")
     assert response.status_code == 422
     assert "Montant invalide : « beaucoup »" in response.text
     assert 'value="Divan"' in response.text and "Cuir</textarea>" in response.text
+    assert 'name="budget" value="beaucoup"' in response.text
+    assert 'name="paye" value="12"' in response.text
     assert "Aucun gros achat en vue." in client.get("/achats").text
 
 

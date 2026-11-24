@@ -25,8 +25,8 @@
       </div>
     </fieldset>
     <div class="two">
-      <label>Budget estimé <input name="budget" value="{{ draft.budget|dollars if draft.budget }}" inputmode="decimal" placeholder="Ex. 1 200 $" autocomplete="off"></label>
-      <label>Prix payé <input name="paye" value="{{ draft.paid|dollars if draft.paid }}" inputmode="decimal" placeholder="À l'achat" autocomplete="off"></label>
+      <label>Budget estimé <input name="budget" value="{{ typed.budget if typed else (draft.budget|dollars if draft.budget) }}" inputmode="decimal" placeholder="Ex. 1 200 $" autocomplete="off"></label>
+      <label>Prix payé <input name="paye" value="{{ typed.paye if typed else (draft.paid|dollars if draft.paid) }}" inputmode="decimal" placeholder="À l'achat" autocomplete="off"></label>
     </div>
     <label>Détails <textarea name="details" rows="6" placeholder="Modèles comparés, liens, notes">{{ draft.details }}</textarea></label>
     {% if draft.links %}
