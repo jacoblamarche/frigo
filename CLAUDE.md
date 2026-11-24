@@ -22,8 +22,8 @@ FRIGO_DEV_USER=Alex uvicorn app.main:create_app --factory --host 127.0.0.1 --rel
 - `app/main.py` : `create_app()` définit toutes les routes, le middleware d'identité et le
   rendu des pages. La validation et le SQL vivent dans le module du domaine, pas dans les
   routes.
-- `app/<domaine>.py` (`groceries`, `recipes`, `tasks`…) : validation, requêtes SQL et tri. Un
-  module par onglet.
+- `app/<domaine>.py` (`groceries`, `recipes`, `tasks`, `purchases`) : validation, requêtes
+  SQL et tri. Un module par onglet.
 - `app/db.py` : connexion, `MIGRATIONS`, `now()`, `bump_version()`.
 - `app/mcp_server.py` : les outils MCP, leurs modèles Pydantic et `INSTRUCTIONS`, les
   consignes envoyées à Claude.

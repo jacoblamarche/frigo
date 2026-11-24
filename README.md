@@ -133,8 +133,10 @@ gh secret set DOCKERHUB_TOKEN -R jacoblamarche/frigo
 
 ## Revue Claude
 
-À l'ouverture d'une PR (hors brouillon), Claude la relit avec le plugin `code-review` et
-commente les problèmes qu'il juge sûrs. Il faut l'app GitHub
+À l'ouverture d'une PR (hors brouillon), puis à chaque push, Claude relit ce qui a changé
+depuis sa dernière revue. Il signale sur le code les problèmes dont il est sûr (bugs, sécurité,
+règles de `CLAUDE.md`), puis laisse une synthèse qui note le dernier commit revu. Les règles du
+dépôt et les consignes de revue sont dans [`CLAUDE.md`](CLAUDE.md). Il faut l'app GitHub
 [Claude](https://github.com/apps/claude) installée sur le dépôt, et un jeton d'abonnement
 Claude dans les secrets :
 
